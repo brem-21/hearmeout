@@ -9,9 +9,10 @@ recordings not saved yet, the review panel where you choose what to save.
 from __future__ import annotations
 
 import html
+import re
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
@@ -158,8 +159,8 @@ class MainWindow(QMainWindow):
         self.search.setMaximumWidth(380)
         self.search.textChanged.connect(self.refresh)
         gear = QToolButton()
-        gear.setText("⚙")
-        gear.setToolTip("Settings")
+        gear.setText("Settings")
+        gear.setToolTip("Meeting detection, start at login, settings file, quit")
         gear.setPopupMode(QToolButton.InstantPopup)
         self.gear_menu = QMenu(gear)
         self.gear_menu.aboutToShow.connect(lambda: (self.gear_menu.clear(), self.w.fill_settings_menu(self.gear_menu)))
@@ -223,11 +224,16 @@ class MainWindow(QMainWindow):
         self.list.clear()
 
         def section(text: str) -> None:
-            item = QListWidgetItem(self.list)
-            item.setFlags(Qt.NoItemFlags)
-            label = _label(text.upper(), "section")
-            item.setSizeHint(label.sizeHint())
-            self.list.setItemWidget(item, label)
+            item = QListWidgetItem(text.upper(), self.list)
+            item.setFlags(Qt.ItemIsEnabled)  # shown, but not selectable
+            f = item.font()
+            f.setBold(True)
+            f.setPointSizeF(f.pointSizeF() * 0.8)
+            f.setLetterSpacing(f.PercentageSpacing, 108)
+            item.setFont(f)
+            item.setForeground(self.palette().placeholderText())
+            item.setSizeHint(item.sizeHint().expandedTo(QSize(0, 34)))
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignBottom)
 
         def add(key: str, obj, row: _Row) -> None:
             item = QListWidgetItem(self.list)
@@ -241,7 +247,7 @@ class MainWindow(QMainWindow):
         if self.w.recorder is not None or pending:
             section("To save")
         if self.w.recorder is not None:
-            app = self.w.call.app if self.w.call else "Recording"
+            app = self.w.call.app if self.w.call else "Started by hand"
             add("recording", None, _Row("Recording now", app, "● REC", "rec"))
         for p in pending:
             sub = " · ".join(x for x in (library.when(p.started), f"{max(1, round(p.duration_s / 60))} min", p.app) if x)
@@ -308,12 +314,17 @@ class MainWindow(QMainWindow):
     def _select_item(self, item: QListWidgetItem | None) -> None:
         if item is not None and item.data(Qt.UserRole):
             self._set_current(item.data(Qt.UserRole))
+        elif self.current:  # clicked a heading: keep the current meeting selected
+            self._set_current(self.current, rebuild=False)
 
     def _show(self, page: QWidget) -> None:
         old = self.detail.currentWidget()
         self.detail.addWidget(page)
         self.detail.setCurrentWidget(page)
-        if old is not None and not isinstance(old, ReviewPanel) and old not in self.panels.values():
+        if old is not None and old is not page:
+            for panel in self.panels.values():  # keep review panels (and your edits in them) alive
+                if old.isAncestorOf(panel):
+                    panel.setParent(None)
             self.detail.removeWidget(old)
             old.deleteLater()
 
@@ -365,7 +376,8 @@ class MainWindow(QMainWindow):
         page, lay = self._page("recording")
         what = self.w.call.app if self.w.call else "meeting"
         lay.addStretch(1)
-        lay.addWidget(_label(f"● Recording {what}", "big"), 0, Qt.AlignCenter)
+        big = _label(f'<span style="color:#e5484d">●</span> Recording {html.escape(what)}', "big")
+        lay.addWidget(big, 0, Qt.AlignCenter)
         page.clock = _label("00:00", "pagetitle")
         lay.addWidget(page.clock, 0, Qt.AlignCenter)
         hint = _label("Recording stops by itself when the call ends." if self.w.call else
@@ -418,7 +430,9 @@ class MainWindow(QMainWindow):
         lay.addSpacing(8)
         if rec.audio.exists() and not busy:
             lay.addWidget(_AudioBar(self.player, rec.audio, rec.duration_s))
-        lay.addStretch(1)
+        lay.addSpacing(12)
+        if not rec.error or busy:
+            lay.addStretch(1)
         if busy:
             lay.addWidget(_label("Making notes…", "big"), 0, Qt.AlignCenter)
             lay.addWidget(_label(self.w.jobs[rec.session].message, "hint"), 0, Qt.AlignCenter)
@@ -439,6 +453,7 @@ class MainWindow(QMainWindow):
             retry.setObjectName("primary")
             retry.clicked.connect(lambda: self.w.process(rec.session))
             lay.addWidget(retry, 0, Qt.AlignLeft)
+            lay.addStretch(1)
         else:
             lay.addWidget(_label("This recording hasn't been turned into notes yet.", "hint"), 0, Qt.AlignCenter)
             go = QPushButton("Make notes")
@@ -517,7 +532,7 @@ class MainWindow(QMainWindow):
         tabs.setDocumentMode(True)
         if "summary" in m.files:
             view = QTextBrowser()
-            view.setMarkdown(_strip_links(m.text("summary")))
+            view.setMarkdown(_strip_links(re.sub(r"^# .*\n+", "", m.text("summary"))))
             tabs.addTab(view, "Summary")
         for key, label in (("my_todos", "My to-dos"), ("team_tasks", "Team tasks")):
             if key in m.files:
@@ -541,7 +556,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(hint)
         lst = QListWidget()
         for t in tasks:
-            item = QListWidgetItem(t.text)
+            item = QListWidgetItem(_task_text(t.text))
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Checked if t.done else Qt.Unchecked)
             item.setToolTip(f"“{t.quote}”" if t.quote else "")
@@ -613,5 +628,18 @@ class MainWindow(QMainWindow):
 
 def _strip_links(md: str) -> str:
     """[[path|Label]] -> Label, for display outside Obsidian."""
-    import re
     return re.sub(r"\[\[(?:[^\]|]*\|)?([^\]]+)\]\]", r"\1", md)
+
+
+def _task_text(md: str) -> str:
+    """'**Ama**: Review the PR 📅 2026-09-24' -> 'Ama: Review the PR  ·  due Thu 24 Sep'."""
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", md)
+    m = re.search(r"\s*📅\s*(\d{4}-\d{2}-\d{2})", text)
+    if m:
+        from datetime import date
+        try:
+            due = date.fromisoformat(m.group(1)).strftime("%a %-d %b")
+        except ValueError:
+            due = m.group(1)
+        text = text[:m.start()] + f"  ·  due {due}" + text[m.end():]
+    return text.strip()
