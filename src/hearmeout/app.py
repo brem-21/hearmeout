@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QSlider, QSplitter, QStackedWidget, QTabWidget, QTextBrowser, QToolButton,
@@ -229,7 +229,7 @@ class MainWindow(QMainWindow):
             f = item.font()
             f.setBold(True)
             f.setPointSizeF(f.pointSizeF() * 0.8)
-            f.setLetterSpacing(f.PercentageSpacing, 108)
+            f.setLetterSpacing(QFont.PercentageSpacing, 108)
             item.setFont(f)
             item.setForeground(self.palette().placeholderText())
             item.setSizeHint(item.sizeHint().expandedTo(QSize(0, 34)))
