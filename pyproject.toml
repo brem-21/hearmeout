@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "hearmeout"
+version = "0.1.0"
+description = "Record meetings on Linux, transcribe them, and file summaries and your tasks into Obsidian."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.6",
+    "numpy>=1.26",
+    "soundfile>=0.12",
+    "PySide6-Essentials>=6.6",
+    "pulsectl>=24.0",
+    "python-xlib>=0.33",
+    "jeepney>=0.8",
+    "tomli>=2.0; python_version < '3.11'",
+]
+
+[project.urls]
+Homepage = "https://github.com/brem-21/hearmeout"
+Issues = "https://github.com/brem-21/hearmeout/issues"
+
+[project.scripts]
+hearmeout = "hearmeout.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/hearmeout"]

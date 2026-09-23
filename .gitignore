@@ -216,3 +216,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Hear Me Out
+*.wav
+*.ogg
+*.opus
+*.pcm
+recordings/
