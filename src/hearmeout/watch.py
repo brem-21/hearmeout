@@ -492,6 +492,9 @@ class Watcher(QObject):
             job.wait()
         if self.window is not None:
             self.window.player.stop()
+            for bar in self.window.bars.values():  # let a save to Obsidian finish
+                if bar._saver is not None:
+                    bar._saver.wait()
         self.detector.close()
         self.tray.hide()
         QApplication.quit()
@@ -505,6 +508,8 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
     app.setApplicationName("hearmeout")
     app.setApplicationDisplayName("Hear Me Out")
     app.setDesktopFileName(notify.DESKTOP_ENTRY)
+    from . import theme
+    theme.apply(app)
     app.setWindowIcon(QIcon.fromTheme(notify.ICON))
     app.setQuitOnLastWindowClosed(False)  # closing the window keeps meeting detection running
 
@@ -523,6 +528,7 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
         return 0
 
     watcher = Watcher()
+    theme.follow_system(app, lambda: watcher.window.retheme() if watcher.window is not None else None)
     QLocalServer.removeServer(SOCKET_NAME)
     server = QLocalServer()
     server.listen(SOCKET_NAME)

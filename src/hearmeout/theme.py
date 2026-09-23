@@ -17,7 +17,7 @@ LIGHT = {
     "accent": "#5b5bd6", "accent_hover": "#4c4cc4", "accent_text": "#ffffff", "accent_soft": "#ededfc",
     "red": "#dc3e42", "red_hover": "#c9353a", "red_soft": "#fdecec",
     "green": "#218358", "green_soft": "#e5f5ec", "amber": "#ab6400", "amber_soft": "#fdf1d9",
-    "me": "#5b5bd6", "them": "#218358", "highlight": "#fff3c4",
+    "me": "#5b5bd6", "them": "#218358", "highlight": "#fff3c4", "rec": "#dc3e42", "rec_hover": "#c9353a",
 }
 DARK = {
     "bg": "#141418", "surface": "#1c1c21", "sidebar": "#111114", "raised": "#222228",
@@ -26,7 +26,7 @@ DARK = {
     "accent": "#8b8aff", "accent_hover": "#9e9dff", "accent_text": "#101016", "accent_soft": "#23234a",
     "red": "#ff6b6f", "red_hover": "#ff8386", "red_soft": "#3b1c1f",
     "green": "#4cc38a", "green_soft": "#15291f", "amber": "#f1a10d", "amber_soft": "#33260b",
-    "me": "#a3a2ff", "them": "#4cc38a", "highlight": "#4a3b00",
+    "me": "#a3a2ff", "them": "#4cc38a", "highlight": "#4a3b00", "rec": "#d93d42", "rec_hover": "#e5484d",
 }
 
 T: dict[str, str] = dict(LIGHT)  # the tokens in use right now
@@ -156,9 +156,9 @@ QPushButton:disabled {{ color: {t['faint']}; border-color: {t['border']}; }}
 QPushButton[variant="primary"] {{ background: {t['accent']}; color: {t['accent_text']}; border: 1px solid {t['accent']}; }}
 QPushButton[variant="primary"]:hover {{ background: {t['accent_hover']}; border-color: {t['accent_hover']}; }}
 QPushButton[variant="primary"]:disabled {{ background: {t['border']}; border-color: {t['border']}; color: {t['faint']}; }}
-QPushButton[variant="record"] {{ background: {t['red']}; color: white; border: 1px solid {t['red']};
+QPushButton[variant="record"] {{ background: {t['rec']}; color: white; border: 1px solid {t['rec']};
                                  padding: 8px 14px; font-weight: 650; }}
-QPushButton[variant="record"]:hover {{ background: {t['red_hover']}; border-color: {t['red_hover']}; }}
+QPushButton[variant="record"]:hover {{ background: {t['rec_hover']}; border-color: {t['rec_hover']}; }}
 QPushButton[variant="ghost"] {{ background: transparent; border: 1px solid transparent; }}
 QPushButton[variant="ghost"]:hover {{ background: {t['hover']}; }}
 QPushButton[variant="danger"] {{ color: {t['red']}; }}
@@ -168,7 +168,7 @@ QPushButton[variant="tab"] {{ background: transparent; border: none; border-bott
                               border-radius: 0; padding: 8px 4px; margin-right: 16px; color: {t['muted']}; }}
 QPushButton[variant="tab"]:hover {{ color: {t['text']}; }}
 QPushButton[variant="tab"]:checked {{ color: {t['text']}; border-bottom: 2px solid {t['accent']}; }}
-QPushButton[variant="chip"] {{ border-radius: 15px; padding: 5px 12px; background: {t['surface']};
+QPushButton[variant="chip"] {{ border-radius: 13px; padding: 5px 12px; background: {t['surface']};
                                color: {t['muted']}; font-weight: 550; }}
 QPushButton[variant="chip"]:checked {{ background: {t['accent_soft']}; border-color: {t['accent']}; color: {t['accent']}; }}
 QPushButton[variant="round"] {{ background: {t['accent']}; border: none; border-radius: 17px;
@@ -193,6 +193,11 @@ QCheckBox::indicator {{ width: 16px; height: 16px; border-radius: 5px; border: 1
                         background: {t['surface']}; }}
 QCheckBox::indicator:hover {{ border-color: {t['accent']}; }}
 QCheckBox::indicator:checked {{ background: {t['accent']}; border-color: {t['accent']}; image: url({check}); }}
+QRadioButton::indicator {{ width: 14px; height: 14px; border-radius: 8px; border: 2px solid {t['border_strong']};
+                           background: {t['surface']}; }}
+QRadioButton::indicator:hover {{ border-color: {t['accent']}; }}
+QRadioButton::indicator:checked {{ width: 8px; height: 8px; border: 5px solid {t['accent']}; border-radius: 9px;
+                                   background: {t['surface']}; }}
 
 QListWidget#Meetings {{ background: transparent; border: none; }}
 QListWidget#Meetings::item {{ border-radius: 8px; margin: 1px 8px; border: none; color: {t['text']}; }}
@@ -215,9 +220,9 @@ QLabel[badge="ready"] {{ background: {t['accent_soft']}; color: {t['accent']}; }
 QLabel[badge="bad"] {{ background: {t['red_soft']}; color: {t['red']}; }}
 QLabel[badge="ok"] {{ background: {t['green_soft']}; color: {t['green']}; }}
 QLabel[badge="plain"] {{ background: {t['hover']}; color: {t['muted']}; }}
-QLabel[chip] {{ border-radius: 9px; padding: 2px 8px; background: {t['hover']}; color: {t['muted']}; font-size: 12px; }}
-QLabel[chip="bad"] {{ background: {t['red_soft']}; color: {t['red']}; }}
-QLabel[chip="warn"] {{ background: {t['amber_soft']}; color: {t['amber']}; }}
+QFrame[chipbox] {{ border-radius: 10px; background: {t['hover']}; }}
+QFrame[chipbox="bad"] {{ background: {t['red_soft']}; }}
+QFrame[chipbox="warn"] {{ background: {t['amber_soft']}; }}
 
 QProgressBar {{ background: {t['hover']}; border: none; border-radius: 4px; max-height: 8px; min-height: 8px; }}
 QProgressBar::chunk {{ background: {t['accent']}; border-radius: 4px; }}
@@ -249,7 +254,6 @@ QSplitter::handle {{ background: {t['border']}; width: 1px; }}
 
 def apply(app: QApplication) -> None:
     """Use Hear Me Out's theme (and keep following the system's light/dark setting)."""
-    global T
     T.clear()
     T.update(DARK if is_dark() else LIGHT)
     app.setStyle("Fusion")

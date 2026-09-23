@@ -9,7 +9,8 @@ into your local Obsidian vault as plain Markdown.
 
 - **Notices meetings for you.** When Zoom, Teams, Slack, Discord, Google Meet
   and similar apps start using your microphone, it asks whether to record. It
-  stops by itself when the call ends, then opens your notes for review.
+  stops by itself when the call ends, or after 2 minutes with nobody talking
+  (with a **Keep recording** warning first), then opens your notes for review.
 - **One place for all your meetings.** The app lists recordings waiting to be saved
   and everything already in Obsidian. Read summaries, tick off to-dos (the Obsidian
   note updates too), search across transcripts, and click any line of a transcript
@@ -45,11 +46,12 @@ uv tool install git+https://github.com/brem-21/hearmeout
 
 **2. Add your name and API keys**
 
-```sh
-hearmeout init      # creates ~/.config/hearmeout/config.toml (only you can read it)
-```
+Open the app (`hearmeout`) and use **Settings** (bottom left, or Ctrl+,): your name,
+your ElevenLabs and OpenRouter keys (**Check keys** tests them), the notes model,
+your vault and meeting options.
 
-Open `~/.config/hearmeout/config.toml` and fill in:
+Or from a terminal, create `~/.config/hearmeout/config.toml` (only you can read it)
+with `hearmeout init` and fill in:
 
 ```toml
 [user]
@@ -108,15 +110,18 @@ delete those too to remove everything.
 
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
-The app has a **Record** button, the list of meetings, and a **Settings** menu.
+The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
+your saved meetings by day; Settings is at the bottom. Light and dark follow your
+system. While recording, a banner shows the time, live **You / Others** levels
+(handy for checking your headset mic is heard) and a countdown if nobody is talking.
 Closing the window keeps Hear Me Out running in the tray so it can notice
 meetings; opening it again (from the app menu or the tray) brings the window back.
 
 | In the list | What you can do |
 |---|---|
-| **To save**: *Ready to save* | pick what goes into Obsidian (summary, my to-dos, team tasks, transcript, audio), untick tasks, fix the title, then **Save**. A progress bar counts each file. |
+| **To save**: *Ready to save* | read the summary, to-dos (with the quote each came from and **Hear it**), team tasks and transcript; rename the meeting; leave out tasks; pick what goes into Obsidian, then **Save**. A progress bar counts each file. |
 | **To save**: *Failed* | see why (no internet, bad API key…), **Try again**, play or delete the recording |
-| **Saved in Obsidian** | summary, to-dos you can tick off, team tasks, transcript; **Open in Obsidian**; play the audio if you kept it |
+| **Saved in Obsidian** | the same view: tick off to-dos (the note in Obsidian updates), click a transcript time to hear it, **Open in Obsidian** |
 
 When a meeting starts you'll get a notification: **Record**, **Not now** or
 **Never for this app**. While it's recording the tray icon is a red dot. When
