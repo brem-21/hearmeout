@@ -224,6 +224,23 @@ class MainWindow(QMainWindow):
         self.list.customContextMenuRequested.connect(self._context_menu)
         QShortcut(QKeySequence.Delete, self.list, self._delete_selected, context=Qt.WidgetShortcut)
         s.addWidget(self.list, 1)
+
+        # Light | Dark: always your choice, whatever the system theme is
+        seg = QHBoxLayout()
+        seg.setSpacing(0)
+        self.theme_btns = {}
+        dark = theme.is_dark()
+        for mode, text, icon in (("light", "Light", "sun"), ("dark", "Dark", "moon")):
+            on = (mode == "dark") == dark
+            b = button(text, icon, variant=f"seg-{'left' if mode == 'light' else 'right'}",
+                       icon_color=T["accent"] if on else T["muted"],
+                       tip=f"Use the {text.lower()} theme (Settings › Appearance has “Match system”)",
+                       on_click=lambda _=False, m=mode: self.set_theme(m))
+            b.setCheckable(True)
+            b.setChecked(on)
+            self.theme_btns[mode] = b
+            seg.addWidget(b, 1)
+        s.addLayout(seg)
         s.addWidget(divider())
         foot = QHBoxLayout()
         foot.setSpacing(8)
@@ -231,11 +248,6 @@ class MainWindow(QMainWindow):
         foot.addWidget(self.status_dot)
         self.status = ElidedLabel("", "muted")
         foot.addWidget(self.status, 1)
-        dark = theme.is_dark()
-        self.theme_btn = button("", "sun" if dark else "moon", "ghost", icon_color=T["muted"],
-                                tip="Switch to light mode" if dark else "Switch to dark mode",
-                                on_click=self._toggle_theme)
-        foot.addWidget(self.theme_btn)
         gear = button("", "settings", "ghost", tip="Settings (Ctrl+,)", icon_color=T["muted"],
                       on_click=self.open_settings)
         foot.addWidget(gear)
@@ -260,14 +272,17 @@ class MainWindow(QMainWindow):
         lay.addWidget(right, 1)
         self.setCentralWidget(root)
 
-    def _toggle_theme(self) -> None:
-        mode = "light" if theme.is_dark() else "dark"
+    def set_theme(self, mode: str) -> None:
+        """Light or dark (or "system"), saved and applied straight away."""
         from . import config
         s = config.load()
         s.appearance = mode
         config.save(s)
         theme.apply(QApplication.instance(), mode)
         self.retheme()
+
+    def _toggle_theme(self) -> None:
+        self.set_theme("light" if theme.is_dark() else "dark")
 
     def retheme(self) -> None:
         """Light/dark changed: rebuild everything with the new colours."""

@@ -216,6 +216,13 @@ QListWidget#Meetings::item:selected {{ background: {t['selected']}; }}
 QFrame[card="true"] {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 12px; }}
 QFrame[card="true"][dim="true"] {{ background: {t['raised']}; }}
 QFrame[card="true"][clickable="true"]:hover {{ border-color: {t['accent']}; background: {t['raised']}; }}
+QPushButton[variant="seg-left"], QPushButton[variant="seg-right"] {{ background: {t['surface']};
+    border: 1px solid {t['border_strong']}; padding: 6px 10px; color: {t['muted']}; font-weight: 600; }}
+QPushButton[variant="seg-left"] {{ border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }}
+QPushButton[variant="seg-right"] {{ border-top-left-radius: 0; border-bottom-left-radius: 0; }}
+QPushButton[variant="seg-left"]:checked, QPushButton[variant="seg-right"]:checked {{
+    background: {t['accent_soft']}; color: {t['accent']}; border-color: {t['accent']}; }}
+QPushButton[variant="seg-left"]:checked {{ border-right: 1px solid {t['accent']}; }}
 QPushButton[variant="nav"] {{ background: transparent; border: none; border-radius: 8px; padding: 8px 10px;
                               text-align: left; font-weight: 600; color: {t['muted']}; }}
 QPushButton[variant="nav"]:hover {{ background: {t['hover']}; color: {t['text']}; }}

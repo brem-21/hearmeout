@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hearmeout"
-version = "0.1.0"
+version = "0.2.0"
 description = "Record meetings on Linux, transcribe them, and file summaries and your tasks into Obsidian."
 readme = "README.md"
 requires-python = ">=3.10"
