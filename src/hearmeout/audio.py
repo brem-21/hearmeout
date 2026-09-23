@@ -22,6 +22,9 @@ import numpy as np
 import soundfile as sf
 
 RATE = 16_000  # speech models don't need more
+# Voice detection, for "stop after N minutes of silence" and the level meters.
+VOICE_MIN_RMS = 150     # quietest level we count as someone talking (16-bit samples)
+VOICE_OVER_FLOOR = 3.0  # …and it must be this many times louder than the background noise
 
 
 def default_devices() -> tuple[str | None, str | None]:
@@ -70,6 +73,9 @@ class Recorder:
         self.started_at: float | None = None
         self._pulse = None
         self.devices: tuple[str | None, str | None] = (None, None)  # (mic, speaker) we moved to
+        self.levels = {"mic": 0.0, "system": 0.0}      # 0..1, for level meters
+        self.last_voice = time.time()                  # when anyone last spoke, either side
+        self._floor = {"mic": None, "system": None}    # background-noise estimate per track
 
     def start(self, mic: str | None = None, speaker: str | None = None) -> None:
         """Start recording, from the given devices or else the current defaults."""
@@ -81,11 +87,33 @@ class Recorder:
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                     start_new_session=True)  # Ctrl+C stops us, not the recorders
             out = open(self.dir / f"{name}.pcm", "wb")
-            t = threading.Thread(target=_pump, args=(proc, out), daemon=True)
+            t = threading.Thread(target=self._pump, args=(name, proc, out), daemon=True)
             t.start()
             self._procs.append(proc)
             self._threads.append(t)
-        self.started_at = time.time()
+        self.started_at = self.last_voice = time.time()
+
+    def silent_for(self) -> float:
+        """Seconds since anyone (you or the others) last spoke."""
+        return time.time() - self.last_voice
+
+    def _pump(self, track: str, proc: subprocess.Popen, out) -> None:
+        """Copy the recorder's audio to disk, measuring its loudness on the way."""
+        with out:
+            while chunk := proc.stdout.read(8192):  # about a quarter of a second
+                out.write(chunk)
+                samples = np.frombuffer(chunk[: len(chunk) // 2 * 2], dtype="<i2").astype(np.float32)
+                if not len(samples):
+                    continue
+                rms = float(np.sqrt(np.mean(samples * samples)))
+                floor = self._floor[track]
+                # Background noise: follows quiet moments quickly, loud ones only very slowly.
+                floor = rms if floor is None or rms < floor else floor + (rms - floor) * 0.005
+                self._floor[track] = floor
+                if rms > max(VOICE_MIN_RMS, floor * VOICE_OVER_FLOOR):
+                    self.last_voice = time.time()
+                db = 20 * np.log10(max(rms, 1.0) / 32768)
+                self.levels[track] = float(min(1.0, max(0.0, (db + 60) / 60)))
 
     def follow(self, mic: str | None, speaker: str | None) -> bool:
         """Record from this mic and from what's playing on this speaker (by device name).
@@ -132,12 +160,6 @@ class Recorder:
             self._pulse.close()
             self._pulse = None
         return combine(self.dir / "mic.pcm", self.dir / "system.pcm", self.dir / "audio.ogg")
-
-
-def _pump(proc: subprocess.Popen, out) -> None:
-    with out:
-        while chunk := proc.stdout.read(8192):
-            out.write(chunk)
 
 
 def _load_pcm(path: Path) -> np.ndarray:

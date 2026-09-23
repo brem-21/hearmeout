@@ -32,38 +32,81 @@ into your local Obsidian vault as plain Markdown.
 
 ## Install
 
-```sh
-pipx install git+https://github.com/brem-21/hearmeout    # Flatpak and AppImage coming
-```
+You need Linux with PipeWire (most distros since 2022) or PulseAudio, and either
+[uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) to install
+Python apps. Flatpak and AppImage packages are coming.
 
-Needs PipeWire (most distros since 2022) or PulseAudio.
-
-## Set up
+**1. Install Hear Me Out**
 
 ```sh
-hearmeout init      # creates ~/.config/hearmeout/config.toml
-hearmeout doctor    # checks audio, keys and vault
+uv tool install git+https://github.com/brem-21/hearmeout
+# or: pipx install git+https://github.com/brem-21/hearmeout
 ```
 
-Put your name in the config file (so tasks addressed to you are found) and add your keys,
-either in the file or as environment variables:
+**2. Add your name and API keys**
 
 ```sh
-export ELEVENLABS_API_KEY=...   # needs Speech to Text access
-export OPENROUTER_API_KEY=...
+hearmeout init      # creates ~/.config/hearmeout/config.toml (only you can read it)
 ```
 
-Your vault is found automatically from Obsidian's own settings (deb, AppImage,
-Flatpak or Snap installs). Otherwise, set `vault` in the config.
+Open `~/.config/hearmeout/config.toml` and fill in:
+
+```toml
+[user]
+name = "Your Name"        # as people say it in meetings, so tasks for you are found
+aliases = []              # nicknames, e.g. ["Kwame"]
+
+[stt]
+api_key = "sk_…"          # ElevenLabs key with Speech to Text access
+
+[llm]
+api_key = "sk-or-v1-…"    # OpenRouter key
+```
+
+Your Obsidian vault is found automatically from Obsidian's own settings (deb,
+AppImage, Flatpak or Snap installs). Otherwise, set `vault` under `[obsidian]`.
+Keys can also be given as environment variables (`ELEVENLABS_API_KEY`,
+`OPENROUTER_API_KEY`) instead.
+
+**3. Check everything works**
+
+```sh
+hearmeout doctor    # checks audio, your name, keys and vault
+```
+
+**4. Add it to your app menu**
+
+```sh
+hearmeout install --autostart   # app menu entry, and start quietly in the tray at login
+```
+
+Then open **Hear Me Out** from your app menu (or run `hearmeout`).
+
+On GNOME the tray icon needs the AppIndicator extension, which Ubuntu has by default.
+Elsewhere install "AppIndicator and KStatusNotifierItem Support". Without it, the
+app still detects meetings and notifies you; open the window from the app menu.
+
+### Update and uninstall
+
+```sh
+uv tool upgrade hearmeout       # or: pipx upgrade hearmeout
+```
+
+```sh
+uv tool uninstall hearmeout     # or: pipx uninstall hearmeout
+rm ~/.local/share/applications/io.github.brem_21.hearmeout.desktop \
+   ~/.config/autostart/io.github.brem_21.hearmeout.desktop
+```
+
+Your meeting notes stay in your Obsidian vault. Settings are in
+`~/.config/hearmeout/` and unsaved recordings in `~/.local/share/hearmeout/`;
+delete those too to remove everything.
 
 ## Use
 
 ### The app (recommended)
 
-```sh
-hearmeout install --autostart   # adds Hear Me Out to your app menu and starts it at login
-hearmeout                       # open the app
-```
+Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The app has a **Record** button, the list of meetings, and a **Settings** menu.
 Closing the window keeps Hear Me Out running in the tray so it can notice

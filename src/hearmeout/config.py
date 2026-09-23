@@ -53,6 +53,7 @@ class Settings:
     detect: str = "ask"
     detect_ignore: list[str] = field(default_factory=list)  # apps never to ask about, e.g. ["firefox"]
     stop_after: int = 15  # seconds after the call app releases the mic before recording stops
+    silence_stop: int = 120  # stop when nobody has spoken for this many seconds (0 = never)
 
 
 # env var -> (settings attribute, converter)
@@ -83,6 +84,7 @@ _TOML = {
     ("detect", "mode"): "detect",
     ("detect", "ignore"): "detect_ignore",
     ("detect", "stop_after"): "stop_after",
+    ("detect", "stop_after_silence"): "silence_stop",
 }
 
 
@@ -145,7 +147,55 @@ save = ["summary", "my_todos", "team_tasks", "transcript"]
 mode = "ask"       # when a meeting starts: "ask", "auto" (record without asking) or "off"
 ignore = []        # apps never to ask about, e.g. ["firefox", "telegram"]
 stop_after = 15    # seconds after a call ends before recording stops
+stop_after_silence = 120   # stop when nobody has spoken for this long (seconds; 0 = never)
 """
         )
         CONFIG_FILE.chmod(0o600)
     return CONFIG_FILE
+
+
+def _toml_value(v) -> str:
+    import json
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    return json.dumps("" if v is None else str(v), ensure_ascii=False)  # JSON strings are valid TOML strings
+
+
+def save(s: Settings) -> Path:
+    """Write settings to config.toml, keeping the file's layout and comments where possible."""
+    import re
+    path = write_template()
+    lines = path.read_text().splitlines()
+    section = None
+    done: set[tuple[str, str]] = set()
+    for i, line in enumerate(lines):
+        m = re.match(r"^\s*\[(\w+)\]\s*$", line)
+        if m:
+            section = m.group(1)
+            continue
+        m = re.match(r"^\s*#?\s*(\w+)\s*=\s*(.*)$", line)
+        if not m or (section, m.group(1)) not in _TOML:
+            continue
+        key = (section, m.group(1))
+        if key in done:
+            continue
+        comment = re.search(r"\s+#[^\"\]]*$", m.group(2))
+        lines[i] = f"{m.group(1)} = {_toml_value(getattr(s, _TOML[key]))}" + (comment.group(0) if comment else "")
+        done.add(key)
+    missing: dict[str, list[str]] = {}
+    for (sec, key), attr in _TOML.items():
+        if (sec, key) not in done:
+            missing.setdefault(sec, []).append(f"{key} = {_toml_value(getattr(s, attr))}")
+    for sec, entries in missing.items():
+        idx = next((i for i, l in enumerate(lines) if l.strip() == f"[{sec}]"), None)
+        if idx is None:
+            lines += ["", f"[{sec}]", *entries]
+        else:
+            lines[idx + 1:idx + 1] = entries
+    path.write_text("\n".join(lines) + "\n")
+    path.chmod(0o600)
+    return path

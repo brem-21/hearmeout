@@ -26,6 +26,7 @@ STATE_FILE = config.DATA_DIR / "watch-state.json"
 AUTOSTART_FILE = config.CONFIG_DIR.parent / "autostart" / f"{notify.DESKTOP_ENTRY}.desktop"
 LAUNCHER_FILE = config.DATA_DIR.parent / "applications" / f"{notify.DESKTOP_ENTRY}.desktop"
 SOCKET_NAME = f"hearmeout-{os.getuid()}"
+SILENCE_WARNING = 30  # warn this many seconds before a silence stop
 POLL_MS = 2000
 CONFIRM_POLLS = 2  # a call must be seen twice in a row (about 2-4 s) before we ask
 
@@ -106,6 +107,13 @@ def install_launcher() -> Path:
     return LAUNCHER_FILE
 
 
+def _duration(sec: int) -> str:
+    m, s = divmod(int(sec), 60)
+    if m and not s:
+        return f"{m} minute{'s' if m != 1 else ''}"
+    return f"{m}:{s:02d} minutes" if m else f"{s} seconds"
+
+
 def _short(app: str) -> str:
     """'Google Meet (Firefox)' -> 'Firefox': the app the "don't ask" choice applies to."""
     return app.split("(")[-1].rstrip(")") if "(" in app else app
@@ -163,6 +171,7 @@ class Watcher(QObject):
         self.rec_started = 0.0
         self.last_heard = 0.0
         self.rec_id = 0
+        self.warn_id = 0                      # "nobody has spoken" warning, while shown
         self.jobs: dict[Path, _Processor] = {}       # session -> note-making in progress
         self.prepared: dict[Path, obsidian.Meeting] = {}  # session -> notes ready to review
         self.ready_ids: dict[int, Path] = {}          # "Notes ready" notification -> session
@@ -196,6 +205,9 @@ class Watcher(QObject):
             self.notifier.close(self.ask_id)
             self.asked, self.ask_id = None, 0
 
+        if self.recorder is not None and self._check_silence():
+            self._update_tray()
+            return
         if self.recorder is not None and self.call is None:
             self.recorder.follow(*audio.default_devices())  # started by hand: follow the defaults
         if self.recorder is not None and self.call is not None:
@@ -216,6 +228,34 @@ class Watcher(QObject):
                     self.ask(c)
                 break
         self._update_tray()
+
+    def _check_silence(self) -> bool:
+        """Stop when nobody has spoken for a while (a call left open, a forgotten recording).
+        Returns True if the recording was stopped."""
+        limit = self.s.silence_stop
+        if limit <= 0:
+            return False
+        quiet = self.recorder.silent_for()
+        if quiet >= limit:
+            self.stop(reason=f"Nobody has spoken for {_duration(limit)}, so recording stopped.")
+            return True
+        if limit >= 2 * SILENCE_WARNING and quiet >= limit - SILENCE_WARNING and not self.warn_id:
+            self.warn_id = self.notifier.show(
+                "Nobody is talking", f"Recording stops in {SILENCE_WARNING} seconds unless someone speaks.",
+                [("keep", "Keep recording"), ("stop", "Stop now")], sticky=True)
+        elif quiet < limit - SILENCE_WARNING and self.warn_id:  # someone spoke again
+            self.notifier.close(self.warn_id)
+            self.warn_id = 0
+        return False
+
+    def keep_recording(self) -> None:
+        """Answer to the silence warning: carry on as if someone had just spoken."""
+        if self.recorder is not None:
+            self.recorder.last_voice = time.time()
+        if self.warn_id:
+            self.notifier.close(self.warn_id)
+            self.warn_id = 0
+        self.changed.emit()
 
     def ask(self, call: detect.Call) -> None:
         self.asked = call
@@ -244,6 +284,12 @@ class Watcher(QObject):
                 self.snoozed.add(call.key)
         elif nid and nid == self.rec_id and key == "stop":
             self.stop()
+        elif nid and nid == self.warn_id:
+            self.warn_id = 0
+            if key == "keep":
+                self.keep_recording()
+            elif key == "stop":
+                self.stop()
         elif nid in self.ready_ids and key in ("open", "default"):
             self.show_window(f"pending:{self.ready_ids[nid]}")
 
@@ -279,14 +325,18 @@ class Watcher(QObject):
         self._update_tray()
         self.changed.emit()
 
-    def stop(self) -> None:
+    def stop(self, reason: str | None = None) -> None:
         if self.recorder is None:
             return
         recorder, session, call = self.recorder, self.session, self.call
         self.recorder = self.session = self.call = None
+        if self.warn_id:
+            self.notifier.close(self.warn_id)
+            self.warn_id = 0
         if call:
             self.snoozed.add(call.key)  # don't ask again about the same call if it's still going
-        nid = self.notifier.show("Making notes…", "Transcribing and summarising your meeting.", replaces=self.rec_id)
+        nid = self.notifier.show("Making notes…", (reason + " " if reason else "") +
+                                 "Transcribing and summarising your meeting.", replaces=self.rec_id)
         self.rec_id = 0
         self.process(session, recorder, nid)
         if self.window is not None and self.window.isVisible():
