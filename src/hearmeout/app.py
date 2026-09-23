@@ -26,7 +26,7 @@ from .settings import SettingsPage
 from .theme import T
 from .views import (
     ClickableCard, ElidedLabel, MeetingData, MeetingView, SaveBar, badge, button, callout, card, chip, divider,
-    friendly_due, from_meeting, from_saved, icon_label, label, text_block,
+    friendly_due, from_meeting, from_saved, icon_label, label,
 )
 
 
@@ -348,7 +348,7 @@ class MainWindow(QMainWindow):
                 self._show(self._settings_page())
             self._tick()
             return
-        target = self.current if self.current in keys else "home"
+        target = self.current if self.current and self.current in keys else "home"
         if target == "home":
             self.current = "home"
             self.list.blockSignals(True)
@@ -718,7 +718,9 @@ class MainWindow(QMainWindow):
         head = QHBoxLayout()
         texts = QVBoxLayout()
         texts.setSpacing(2)
-        texts.addWidget(label(f"Good {part}{', ' + first if first else ''}", "greeting"))
+        greeting = label(f"Good {part}{', ' + first if first else ''}", "greeting", wrap=True)
+        greeting.setMinimumWidth(200)
+        texts.addWidget(greeting)
         texts.addWidget(label(f"{date.today():%A %-d %B}", "muted"))
         head.addLayout(texts, 1)
         if self.w.recorder is None:
@@ -750,7 +752,9 @@ class MainWindow(QMainWindow):
             t = QVBoxLayout()
             t.setSpacing(0)
             t.addWidget(label(number, "stat"))
-            t.addWidget(label(text, "muted"))
+            sub = label(text, "muted", wrap=True)
+            sub.setMinimumWidth(60)
+            t.addWidget(sub)
             lay.addLayout(t, 1)
             tiles.addWidget(c, 1)
 
@@ -775,9 +779,11 @@ class MainWindow(QMainWindow):
             el.setContentsMargins(24, 22, 24, 22)
             el.setSpacing(8)
             el.addWidget(label("Your meetings will appear here", "h2"))
-            el.addWidget(text_block("Join a call in Zoom, Teams, Meet, Slack or Discord and Hear Me Out offers to "
-                                    "record it. When it ends you get a summary, your to-dos and a transcript, and "
-                                    "you choose what to save to Obsidian.", width=780))
+            intro = label("Join a call in Zoom, Teams, Meet, Slack or Discord and Hear Me Out offers to record it. "
+                          "When it ends you get a summary, your to-dos and a transcript, and you choose what to "
+                          "save to Obsidian.", "muted", wrap=True)
+            intro.setMinimumWidth(200)
+            el.addWidget(intro)
             col.addWidget(empty)
             tips = QHBoxLayout()
             tips.setSpacing(12)
@@ -790,8 +796,12 @@ class MainWindow(QMainWindow):
                 cl.setContentsMargins(16, 16, 16, 16)
                 cl.setSpacing(6)
                 cl.addWidget(icon_label(icon, T["accent"], 20))
-                cl.addWidget(label(title, "h2"))
-                cl.addWidget(text_block(text, width=260))
+                heading = label(title, "h2", wrap=True)
+                heading.setMinimumWidth(100)
+                cl.addWidget(heading)
+                tip = label(text, "muted", wrap=True)
+                tip.setMinimumWidth(120)
+                cl.addWidget(tip)
                 cl.addStretch(1)
                 tips.addWidget(c, 1)
             col.addLayout(tips)

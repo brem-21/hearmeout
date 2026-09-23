@@ -110,6 +110,11 @@ class SettingsPage(QWidget):
         col.setContentsMargins(32, 24, 32, 24)
         col.setSpacing(14)
         col.addWidget(label("Settings", "h1"))
+        self._sections: dict[str, QWidget] = {}
+        jump = QHBoxLayout()
+        jump.setSpacing(6)
+        self._jump_row = jump
+        col.addLayout(jump)
 
         # --- appearance
         c, f = _section("Appearance", "sun")
@@ -131,6 +136,7 @@ class SettingsPage(QWidget):
         self.appearance.buttonClicked.connect(self._appearance_clicked)
         f.addRow("Theme", row)
         col.addWidget(c)
+        self._sections["Appearance"] = c
 
         # --- you
         c, f = _section("You", "users", "So Hear Me Out knows which tasks in a meeting are yours.")
@@ -141,6 +147,7 @@ class SettingsPage(QWidget):
         f.addRow("Your name", self.name)
         f.addRow("Also called", self.aliases)
         col.addWidget(c)
+        self._sections["You"] = c
 
         # --- services
         c, f = _section("Transcription and notes", "key",
@@ -170,6 +177,7 @@ class SettingsPage(QWidget):
         row.addWidget(self.check_result, 1)
         f.addRow("", row)
         col.addWidget(c)
+        self._sections["Keys"] = c
 
         # --- obsidian
         c, f = _section("Obsidian", "gem")
@@ -200,6 +208,7 @@ class SettingsPage(QWidget):
         items.addStretch(1)
         f.addRow("Save by default", items)
         col.addWidget(c)
+        self._sections["Obsidian"] = c
 
         # --- meetings
         c, f = _section("Meetings", "mic")
@@ -240,12 +249,23 @@ class SettingsPage(QWidget):
                 box.addWidget(cb)
             f.addRow("Apps", box)
         col.addWidget(c)
+        self._sections["Meetings"] = c
         col.addStretch(1)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(body)
+        self._scroll = scroll
+        icons = {"Appearance": "sun", "You": "users", "Keys": "key", "Obsidian": "gem", "Meetings": "mic"}
+        for name in self._sections:
+            b = QPushButton(name)
+            b.setProperty("variant", "chip")
+            b.setIcon(theme.icon(icons[name], T["muted"], 14))
+            b.setCursor(Qt.PointingHandCursor)
+            b.clicked.connect(lambda _=False, n=name: self.show_section(n))
+            self._jump_row.addWidget(b)
+        self._jump_row.addStretch(1)
 
         # footer
         self.status = label("", "muted")
@@ -277,6 +297,12 @@ class SettingsPage(QWidget):
         self._loading = False
         self.dirty = False
         self._update_footer()
+
+    def show_section(self, name: str) -> None:
+        """Scroll to a section, e.g. show_section("Obsidian")."""
+        w = self._sections.get(name)
+        if w is not None:
+            self._scroll.verticalScrollBar().setValue(max(0, w.y() - 12))
 
     # --- state
 
