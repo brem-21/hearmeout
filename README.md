@@ -111,8 +111,9 @@ delete those too to remove everything.
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
-your saved meetings by day; Settings is at the bottom. Light and dark follow your
-system. While recording, a banner shows the time, live **You / Others** levels
+your saved meetings by day; Settings is at the bottom. A **Light | Dark** switch in
+the sidebar sets the theme whatever your system uses (Settings › Appearance also has
+“Match system”). While recording, a banner shows the time, live **You / Others** levels
 (handy for checking your headset mic is heard) and a countdown if nobody is talking.
 Closing the window keeps Hear Me Out running in the tray so it can notice
 meetings; opening it again (from the app menu or the tray) brings the window back.

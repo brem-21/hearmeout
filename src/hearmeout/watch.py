@@ -516,7 +516,31 @@ class Watcher(QObject):
         QApplication.quit()
 
 
+LOG_FILE = config.DATA_DIR / "app.log"
+
+
+def _log_errors() -> None:
+    """The app usually runs without a terminal, so keep unexpected errors in a log file."""
+    import traceback
+    from datetime import datetime
+
+    def hook(kind, value, tb):
+        text = "".join(traceback.format_exception(kind, value, tb))
+        sys.__stderr__.write(text)
+        try:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            if LOG_FILE.exists() and LOG_FILE.stat().st_size > 1_000_000:
+                LOG_FILE.write_text("")  # keep it small
+            with LOG_FILE.open("a") as f:
+                f.write(f"--- {datetime.now():%Y-%m-%d %H:%M:%S}\n{text}")
+        except OSError:
+            pass
+
+    sys.excepthook = hook
+
+
 def run(show_window: bool, autostart: bool | None = None) -> int:
+    _log_errors()
     if autostart is not None:
         set_autostart(autostart)
         print(f"Start at login {'on' if autostart else 'off'}.", file=sys.stderr)
