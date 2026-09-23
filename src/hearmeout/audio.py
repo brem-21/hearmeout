@@ -24,22 +24,34 @@ import soundfile as sf
 RATE = 16_000  # speech models don't need more
 
 
-def _commands() -> tuple[list[str], list[str]]:
+def default_devices() -> tuple[str | None, str | None]:
+    """Names of the system's default mic and speaker."""
+    try:
+        import pulsectl
+        with pulsectl.Pulse("hearmeout-defaults") as p:
+            info = p.server_info()
+            return info.default_source_name, info.default_sink_name
+    except Exception:
+        return None, None
+
+
+def _commands(mic: str | None, speaker: str | None) -> tuple[list[str], list[str]]:
     fmt = ["--rate", str(RATE), "--channels", "1"]
     if shutil.which("pw-record"):
-        base = ["pw-record", *fmt, "--format", "s16"]
-        mic = [*base, "-P", "{ node.name=hearmeout-mic node.description=\"Hear Me Out (mic)\" }", "-"]
-        system = [
-            *base,
-            "-P",
-            "{ stream.capture.sink=true node.name=hearmeout-system node.description=\"Hear Me Out (system)\" }",
-            "-",
-        ]
-        return mic, system
+        # Our own media role, so the session manager's memory of where our streams went
+        # never mixes with other apps' streams; explicit targets so nothing stale is reused.
+        base = ["pw-record", *fmt, "--format", "s16", "--media-category", "Capture", "--media-role", "Notes"]
+        mic_cmd = [*base, *(["--target", mic] if mic else []),
+                   "-P", "{ node.name=hearmeout-mic node.description=\"Hear Me Out (mic)\" }", "-"]
+        system_cmd = [*base, *(["--target", speaker] if speaker else []),
+                      "-P", "{ stream.capture.sink=true node.name=hearmeout-system "
+                            "node.description=\"Hear Me Out (system)\" }", "-"]
+        return mic_cmd, system_cmd
     if shutil.which("parec"):
         base = ["parec", *fmt, "--format=s16le", "--raw"]
-        return ([*base, "--client-name=hearmeout-mic", "--device=@DEFAULT_SOURCE@"],
-                [*base, "--client-name=hearmeout-system", "--device=@DEFAULT_MONITOR@"])
+        return ([*base, "--client-name=hearmeout-mic", f"--device={mic or '@DEFAULT_SOURCE@'}"],
+                [*base, "--client-name=hearmeout-system",
+                 f"--device={speaker + '.monitor' if speaker else '@DEFAULT_MONITOR@'}"])
     raise RuntimeError("No audio recorder found: install PipeWire (pw-record) or PulseAudio utilities (parec).")
 
 
@@ -59,8 +71,13 @@ class Recorder:
         self._pulse = None
         self.devices: tuple[str | None, str | None] = (None, None)  # (mic, speaker) we moved to
 
-    def start(self) -> None:
-        for name, cmd in zip(("mic", "system"), _commands()):
+    def start(self, mic: str | None = None, speaker: str | None = None) -> None:
+        """Start recording, from the given devices or else the current defaults."""
+        if not (mic and speaker):
+            dmic, dspeaker = default_devices()
+            mic, speaker = mic or dmic, speaker or dspeaker
+        self.devices = (mic, speaker)
+        for name, cmd in zip(("mic", "system"), _commands(mic, speaker)):
             proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                     start_new_session=True)  # Ctrl+C stops us, not the recorders
             out = open(self.dir / f"{name}.pcm", "wb")

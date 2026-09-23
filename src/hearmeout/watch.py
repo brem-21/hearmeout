@@ -196,6 +196,8 @@ class Watcher(QObject):
             self.notifier.close(self.ask_id)
             self.asked, self.ask_id = None, 0
 
+        if self.recorder is not None and self.call is None:
+            self.recorder.follow(*audio.default_devices())  # started by hand: follow the defaults
         if self.recorder is not None and self.call is not None:
             if self.call.key in present:
                 self.last_heard = time.time()
@@ -263,14 +265,12 @@ class Watcher(QObject):
                                             title_hint=call.title_hint if call else None)
         self.recorder = audio.Recorder(self.session)
         try:
-            self.recorder.start()
+            self.recorder.start(call.mic if call else None, call.speaker if call else None)
         except RuntimeError as e:
             self.recorder = None
             self.notifier.show("Couldn't start recording", str(e), urgent=True)
             return
         self.call = call
-        if call:  # record from the devices the call uses (say, a headset), once our streams exist
-            QTimer.singleShot(600, lambda: self.recorder and self.recorder.follow(call.mic, call.speaker))
         self.rec_started = self.last_heard = time.time()
         what = f"{call.app} meeting" if call else "meeting"
         body = ("Recording stops by itself when the call ends." if call
