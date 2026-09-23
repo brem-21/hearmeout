@@ -492,7 +492,7 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
         show_window = True
     if show_window:
         watcher.show_window()
-    print("Hear Me Out is running. Quit from the tray icon or the ⚙ menu, or press Ctrl+C.", file=sys.stderr)
+    print("Hear Me Out is running. Quit from the tray icon or the Settings menu, or press Ctrl+C.", file=sys.stderr)
 
     import signal
     signal.signal(signal.SIGINT, lambda *_: watcher.quit())

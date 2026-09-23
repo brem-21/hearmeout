@@ -12,6 +12,7 @@ import html
 import re
 from pathlib import Path
 
+import soundfile as sf
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -526,7 +527,11 @@ class MainWindow(QMainWindow):
             lay.addWidget(banner)
 
         if m.audio:
-            lay.addWidget(_AudioBar(self.player, m.audio, m.duration_min * 60 or 1))
+            try:
+                length = sf.info(m.audio).duration
+            except RuntimeError:
+                length = m.duration_min * 60 or 1
+            lay.addWidget(_AudioBar(self.player, m.audio, length))
 
         tabs = QTabWidget()
         tabs.setDocumentMode(True)

@@ -1,6 +1,9 @@
 """hearmeout command line.
 
-  hearmeout watch             run in the background: notice meetings, record, make notes
+  hearmeout                   open the app (same as `hearmeout app`)
+  hearmeout app               open the app window: meetings, transcripts, saving
+  hearmeout watch             start quietly in the tray: notice meetings, record, make notes
+  hearmeout install           add Hear Me Out to your app menu (and optionally start at login)
   hearmeout record            record now; Ctrl+C to stop, then notes go to Obsidian
   hearmeout process FILE|DIR  turn an existing recording into notes
   hearmeout vaults            list the Obsidian vaults found on this machine
@@ -103,12 +106,25 @@ def _gui_available() -> bool:
     return True
 
 
-def cmd_watch(args) -> int:
+def cmd_watch(args, show_window: bool = False) -> int:
     if not _gui_available():
-        _say("hearmeout watch needs a desktop session (it shows a tray icon and notifications).")
+        _say("Hear Me Out's app needs a desktop session. Use `hearmeout record` in a terminal instead.")
         return 1
     from . import watch
-    return watch.run(autostart=args.autostart)
+    return watch.run(show_window=show_window, autostart=getattr(args, "autostart", None))
+
+
+def cmd_app(args) -> int:
+    return cmd_watch(args, show_window=True)
+
+
+def cmd_install(args) -> int:
+    from . import watch
+    _say(f"✓ Added to your app menu: {watch.install_launcher()}")
+    if args.autostart:
+        watch.set_autostart(True)
+        _say(f"✓ Starts at login: {watch.AUTOSTART_FILE}")
+    return 0
 
 
 def cmd_vaults(args) -> int:
@@ -164,7 +180,7 @@ def cmd_init(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="hearmeout", description="Meeting notes from your Linux desktop into Obsidian.")
     p.add_argument("--version", action="version", version=f"hearmeout {__version__}")
-    sub = p.add_subparsers(dest="cmd", required=True)
+    sub = p.add_subparsers(dest="cmd")
 
     def outputs(sp):
         sp.add_argument("--title", help="meeting title (default: generated from the conversation)")
@@ -175,7 +191,14 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("-y", "--yes", action="store_true", help="save the default items without asking")
         sp.add_argument("--no-gui", action="store_true", help="ask in the terminal instead of opening a window")
 
-    sp = sub.add_parser("watch", help="run in the background and notice meetings automatically")
+    sp = sub.add_parser("app", help="open the app window")
+    sp.set_defaults(func=cmd_app)
+
+    sp = sub.add_parser("install", help="add Hear Me Out to your app menu")
+    sp.add_argument("--autostart", action="store_true", help="also start it (quietly, in the tray) at login")
+    sp.set_defaults(func=cmd_install)
+
+    sp = sub.add_parser("watch", help="start quietly in the tray and notice meetings automatically")
     g = sp.add_mutually_exclusive_group()
     g.add_argument("--autostart", action="store_true", default=None, help="also start at every login")
     g.add_argument("--no-autostart", dest="autostart", action="store_false", help="stop starting at login")
@@ -195,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init", help="create a config file").set_defaults(func=cmd_init)
 
     args = p.parse_args(argv)
+    if args.cmd is None:  # plain `hearmeout` opens the app
+        args.func = cmd_app
     try:
         return args.func(args)
     except RuntimeError as e:

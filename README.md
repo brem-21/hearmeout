@@ -10,9 +10,16 @@ into your local Obsidian vault as plain Markdown.
 - **Notices meetings for you.** When Zoom, Teams, Slack, Discord, Google Meet
   and similar apps start using your microphone, it asks whether to record. It
   stops by itself when the call ends, then opens your notes for review.
+- **One place for all your meetings.** The app lists recordings waiting to be saved
+  and everything already in Obsidian. Read summaries, tick off to-dos (the Obsidian
+  note updates too), search across transcripts, and click any line of a transcript
+  to hear that moment.
 - **You vs. everyone else.** Your microphone and the computer's audio are
   recorded as separate tracks, so the transcript knows what *you* said and
   "My to-dos" only lists tasks that are yours.
+- **Headset or speakers.** Recording follows the mic and speaker your call app
+  actually uses (USB or Bluetooth headset), even if you switch mid-call. On laptop
+  speakers, the other side's voice picked up by your mic is filtered out.
 - **You choose what's saved.** After each meeting, a review window lets you pick
   any of: summary, my to-dos, team tasks, transcript, audio. Untick individual
   tasks, fix the title, pick the vault, then save.
@@ -51,28 +58,39 @@ Flatpak or Snap installs). Otherwise, set `vault` in the config.
 
 ## Use
 
-### Automatically (recommended)
+### The app (recommended)
 
 ```sh
-hearmeout watch --autostart     # runs in the tray now and at every login
+hearmeout install --autostart   # adds Hear Me Out to your app menu and starts it at login
+hearmeout                       # open the app
 ```
+
+The app has a **Record** button, the list of meetings, and a **Settings** menu.
+Closing the window keeps Hear Me Out running in the tray so it can notice
+meetings; opening it again (from the app menu or the tray) brings the window back.
+
+| In the list | What you can do |
+|---|---|
+| **To save**: *Ready to save* | pick what goes into Obsidian (summary, my to-dos, team tasks, transcript, audio), untick tasks, fix the title, then **Save**. A progress bar counts each file. |
+| **To save**: *Failed* | see why (no internet, bad API key…), **Try again**, play or delete the recording |
+| **Saved in Obsidian** | summary, to-dos you can tick off, team tasks, transcript; **Open in Obsidian**; play the audio if you kept it |
 
 When a meeting starts you'll get a notification: **Record**, **Not now** or
 **Never for this app**. While it's recording the tray icon is a red dot. When
-the call ends (or you press **Stop recording**), notes are made and the review
-window opens.
+the call ends (or you press **Stop recording**), notes are made and the app
+opens on them, ready to save.
 
 | Detected as a meeting | How |
 |---|---|
 | Zoom, Microsoft Teams, Slack huddles, Discord, Webex, Skype, Telegram, Signal, Element, WhatsApp… | the app uses your microphone |
 | Google Meet, Teams, Zoom, Jitsi, Whereby… in a browser | the browser uses your microphone; the tab title names the meeting when it's visible (X11) |
 
-Other apps using the mic (voice recorders, OBS) are ignored. The tray menu has
-**Record now**, **Unsaved recordings**, detection on/off, **Record without asking**
-and **Start at login**. On GNOME the tray icon needs the AppIndicator extension
+Other apps using the mic (voice recorders, OBS) are ignored. The Settings menu
+(also in the tray) has detection on/off, **Record without asking**, the apps you
+chose never to be asked about, and **Start at login**. On GNOME the tray icon needs the AppIndicator extension
 (on by default on Ubuntu).
 
-### By hand
+### From the terminal
 
 ```sh
 hearmeout record                  # Ctrl+C when the meeting ends, then review and save
