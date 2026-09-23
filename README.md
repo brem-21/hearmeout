@@ -7,6 +7,9 @@ transcribes them with ElevenLabs Scribe, uses a model of your choice through
 OpenRouter to write a summary and pull out tasks, and saves what you choose
 into your local Obsidian vault as plain Markdown.
 
+- **Notices meetings for you.** When Zoom, Teams, Slack, Discord, Google Meet
+  and similar apps start using your microphone, it asks whether to record. It
+  stops by itself when the call ends, then opens your notes for review.
 - **You vs. everyone else.** Your microphone and the computer's audio are
   recorded as separate tracks, so the transcript knows what *you* said and
   "My to-dos" only lists tasks that are yours.
@@ -23,7 +26,7 @@ into your local Obsidian vault as plain Markdown.
 ## Install
 
 ```sh
-pipx install hearmeout      # Flatpak and AppImage coming
+pipx install git+https://github.com/brem-21/hearmeout    # Flatpak and AppImage coming
 ```
 
 Needs PipeWire (most distros since 2022) or PulseAudio.
@@ -47,6 +50,29 @@ Your vault is found automatically from Obsidian's own settings (deb, AppImage,
 Flatpak or Snap installs). Otherwise, set `vault` in the config.
 
 ## Use
+
+### Automatically (recommended)
+
+```sh
+hearmeout watch --autostart     # runs in the tray now and at every login
+```
+
+When a meeting starts you'll get a notification: **Record**, **Not now** or
+**Never for this app**. While it's recording the tray icon is a red dot. When
+the call ends (or you press **Stop recording**), notes are made and the review
+window opens.
+
+| Detected as a meeting | How |
+|---|---|
+| Zoom, Microsoft Teams, Slack huddles, Discord, Webex, Skype, Telegram, Signal, Element, WhatsApp… | the app uses your microphone |
+| Google Meet, Teams, Zoom, Jitsi, Whereby… in a browser | the browser uses your microphone; the tab title names the meeting when it's visible (X11) |
+
+Other apps using the mic (voice recorders, OBS) are ignored. The tray menu has
+**Record now**, **Unsaved recordings**, detection on/off, **Record without asking**
+and **Start at login**. On GNOME the tray icon needs the AppIndicator extension
+(on by default on Ubuntu).
+
+### By hand
 
 ```sh
 hearmeout record                  # Ctrl+C when the meeting ends, then review and save

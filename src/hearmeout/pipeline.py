@@ -37,7 +37,35 @@ def pending_sessions() -> list[Path]:
 def prepare(path: Path, s: config.Settings, *, title: str | None = None,
             status: Callable[[str], None] = lambda msg: None) -> tuple[obsidian.Meeting, Path]:
     """Transcribe and summarise a session folder or any audio file.
-    Returns the meeting and its working folder (delete it with cleanup() once saved)."""
+    Returns the meeting and its working folder (delete it with cleanup() once saved).
+    If it fails, the reason is kept in the session folder (see error())."""
+    error_file = path / "error.txt" if path.is_dir() else None
+    try:
+        result = _prepare(path, s, title=title, status=status)
+    except Exception as e:
+        if error_file:
+            error_file.write_text(str(e))
+        raise
+    if error_file and error_file.exists():
+        error_file.unlink()
+    return result
+
+
+def error(session: Path) -> str | None:
+    """Why the last attempt to make notes for this recording failed, if it did."""
+    try:
+        return (session / "error.txt").read_text() or None
+    except OSError:
+        return None
+
+
+def is_ready(session: Path) -> bool:
+    """Notes (or at least a transcript, when no model key is set) are already made."""
+    return (session / "notes.json").exists()
+
+
+def _prepare(path: Path, s: config.Settings, *, title: str | None,
+             status: Callable[[str], None]) -> tuple[obsidian.Meeting, Path]:
     if path.is_dir():  # one of our session folders
         work, audio_file, two_track = path, path / "audio.ogg", True
         started = datetime.strptime(path.name, SESSION_FMT)

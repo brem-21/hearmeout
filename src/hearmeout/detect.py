@@ -71,6 +71,9 @@ class Call:
     app: str               # what to show the user, e.g. "Zoom" or "Google Meet (Firefox)"
     title_hint: str | None  # meeting name taken from the window title, if any
     confident: bool        # True for call apps / recognised web meetings, False for "a browser uses the mic"
+    # The devices the call is actually using (a headset, say), so the recording can follow them.
+    mic: str | None = None      # source name
+    speaker: str | None = None  # sink name
 
 
 def _match(text: str, table: dict[str, list[str]]) -> str | None:
@@ -132,11 +135,29 @@ class Detector:
         self._windows = _Windows()
 
     def _streams(self) -> list[dict]:
+        """Capture streams, each with the name of the mic it records from ("_source")
+        and the speaker the same app plays to ("_sink"), when it's playing."""
         for attempt in range(2):  # reconnect once if the sound server restarted
             try:
                 if self._pulse is None:
                     self._pulse = pulsectl.Pulse("hearmeout-detector")
-                return [so.proplist for so in self._pulse.source_output_list()]
+                p = self._pulse
+                sources = {s.index: s.name for s in p.source_list()}
+                sinks = {s.index: s.name for s in p.sink_list()}
+                playing: dict[str, str] = {}
+                for si in p.sink_input_list():
+                    for k in ("application.process.binary", "application.name"):
+                        v = (si.proplist.get(k) or "").lower()
+                        if v:
+                            playing.setdefault(v, sinks.get(si.sink))
+                out = []
+                for so in p.source_output_list():
+                    props = dict(so.proplist)
+                    props["_source"] = sources.get(so.source)
+                    props["_sink"] = next((playing[v] for k in ("application.process.binary", "application.name")
+                                           if (v := (props.get(k) or "").lower()) in playing), None)
+                    out.append(props)
+                return out
             except pulsectl.PulseError:
                 if self._pulse is not None:
                     self._pulse.close()
@@ -164,7 +185,7 @@ class Detector:
                 frag = CALL_APPS[app]
                 hint = next((h for cls, t in windows if any(f in cls for f in frag)
                              for h in [_clean_title(t)] if h), None)
-                calls[key] = Call(key, app, hint, True)
+                calls[key] = Call(key, app, hint, True, props.get("_source"), props.get("_sink"))
                 continue
 
             browser = _match(text, BROWSERS)
@@ -186,10 +207,11 @@ class Detector:
                             break
                     if found:
                         break
+                devices = (props.get("_source"), props.get("_sink"))
                 if found:
-                    calls[key] = Call(key, f"{found[0]} ({browser})", found[1], True)
+                    calls[key] = Call(key, f"{found[0]} ({browser})", found[1], True, *devices)
                 else:
-                    calls[key] = Call(key, browser, None, False)
+                    calls[key] = Call(key, browser, None, False, *devices)
         return sorted(calls.values(), key=lambda c: not c.confident)
 
     def close(self) -> None:

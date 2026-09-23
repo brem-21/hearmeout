@@ -1,5 +1,8 @@
-"""Review window shown after a meeting is processed: choose what to save to
-Obsidian, check the notes, then save with a per-item progress bar."""
+"""Review step after a meeting is processed: choose what to save to Obsidian,
+check the notes, then save with a per-item progress bar.
+
+ReviewPanel is embedded in the main app window; ReviewWindow wraps it as a
+stand-alone dialog for the command line."""
 
 from __future__ import annotations
 
@@ -90,16 +93,18 @@ class _ItemRow(QWidget):
         row.addLayout(text, 1)
 
 
-class ReviewWindow(QDialog):
+class ReviewPanel(QWidget):
+    saved_paths = Signal(list)  # paths written, once saving has finished
+    closed = Signal()      # "Close without saving" / "Done" (stand-alone window only)
+
     def __init__(self, meeting: Meeting, vaults: list[Path], vault: Path | None, folder: str,
-                 initial: list[str]):
+                 initial: list[str], embedded: bool = False):
         super().__init__()
+        self.embedded = embedded
         self.meeting = meeting
         self.saved: list[Path] = []
         self.vault_path: Path | None = None
         self._saver: _Saver | None = None
-        self.setWindowTitle("Save meeting · Hear Me Out")
-        self.resize(940, 640)
         self.setStyleSheet(STYLE)
 
         # --- header: title + meta
@@ -184,7 +189,8 @@ class ReviewWindow(QDialog):
         self.status.setObjectName("status")
         self.close_btn = QPushButton("Close without saving")
         self.close_btn.setToolTip("The recording is kept, so you can save it later with 'hearmeout process'.")
-        self.close_btn.clicked.connect(self.reject)
+        self.close_btn.clicked.connect(self.closed.emit)
+        self.close_btn.setVisible(not embedded)  # in the app, the recording simply stays in the list
         self.open_btn = QPushButton("Open in Obsidian")
         self.open_btn.setVisible(False)
         self.open_btn.clicked.connect(self._open_obsidian)
@@ -208,7 +214,7 @@ class ReviewWindow(QDialog):
         line.setFrameShadow(QFrame.Sunken)
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(16, 14, 16, 14)
+        root.setContentsMargins(*((0, 0, 0, 0) if embedded else (16, 14, 16, 14)))
         root.addWidget(self.title)
         root.addWidget(meta)
         root.addSpacing(6)
@@ -376,6 +382,8 @@ class ReviewWindow(QDialog):
             self.status.setText("Saving stopped.")
             QMessageBox.critical(self, "Couldn't save", f"Saving to Obsidian failed:\n\n{error}")
             self.close_btn.setEnabled(True)
+            if self.saved:  # some files did make it: let the app know
+                self.saved_paths.emit(self.saved)
             return
         folder = self.saved[0].parent.relative_to(self.vault_path) if self.saved else ""
         self.status.setText(f"✓ Saved {len(self.saved)} item{'s' if len(self.saved) != 1 else ''} to {folder}/")
@@ -383,12 +391,12 @@ class ReviewWindow(QDialog):
         self.close_btn.setText("Done")
         self.close_btn.setToolTip("")
         self.close_btn.setEnabled(True)
-        self.close_btn.clicked.disconnect()
-        self.close_btn.clicked.connect(self.accept)
+        self.close_btn.setVisible(not self.embedded)
         self.open_btn.setVisible(obsidian.main_note(self.saved) is not None)
         self.folder_btn.setVisible(True)
         self.open_btn.setDefault(True)
         self.open_btn.setFocus()
+        self.saved_paths.emit(self.saved)
 
     def _open_obsidian(self) -> None:
         note = obsidian.main_note(self.saved)
@@ -399,8 +407,38 @@ class ReviewWindow(QDialog):
         if self.saved:
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.saved[0].parent)))
 
+    @property
+    def busy(self) -> bool:
+        return self._saver is not None
+
+
+class ReviewWindow(QDialog):
+    """The review panel as a stand-alone window (used by `hearmeout record` / `process`)."""
+
+    def __init__(self, meeting: Meeting, vaults: list[Path], vault: Path | None, folder: str, initial: list[str]):
+        super().__init__()
+        self.setWindowTitle("Save meeting · Hear Me Out")
+        self.resize(940, 640)
+        self.panel = ReviewPanel(meeting, vaults, vault, folder, initial)
+        self.panel.closed.connect(lambda: self.accept() if self.panel.saved else self.reject())
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(self.panel)
+
+    @property
+    def meeting(self) -> Meeting:
+        return self.panel.meeting
+
+    @property
+    def saved(self) -> list[Path]:
+        return self.panel.saved
+
+    @property
+    def vault_path(self) -> Path | None:
+        return self.panel.vault_path
+
     def reject(self) -> None:
-        if self._saver is None:  # can't close mid-save
+        if not self.panel.busy:  # can't close mid-save
             super().reject()
 
 
@@ -416,7 +454,7 @@ def review(meeting: Meeting, *, vault: Path | None, folder: str,
     empty if the user closed the window without saving."""
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationDisplayName("Hear Me Out")
-    app.setDesktopFileName("io.github.hearmeout.HearMeOut")
+    app.setDesktopFileName("io.github.brem_21.hearmeout")
     initial = _load_choices(default_keys)
     win = ReviewWindow(meeting, obsidian.find_vaults(), vault, folder, initial)
     win.exec()

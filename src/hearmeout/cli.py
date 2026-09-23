@@ -1,5 +1,6 @@
 """hearmeout command line.
 
+  hearmeout watch             run in the background: notice meetings, record, make notes
   hearmeout record            record now; Ctrl+C to stop, then notes go to Obsidian
   hearmeout process FILE|DIR  turn an existing recording into notes
   hearmeout vaults            list the Obsidian vaults found on this machine
@@ -102,6 +103,14 @@ def _gui_available() -> bool:
     return True
 
 
+def cmd_watch(args) -> int:
+    if not _gui_available():
+        _say("hearmeout watch needs a desktop session (it shows a tray icon and notifications).")
+        return 1
+    from . import watch
+    return watch.run(autostart=args.autostart)
+
+
 def cmd_vaults(args) -> int:
     vaults = obsidian.find_vaults()
     if not vaults:
@@ -165,6 +174,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="comma-separated default items to save: " + ", ".join(obsidian.ITEMS))
         sp.add_argument("-y", "--yes", action="store_true", help="save the default items without asking")
         sp.add_argument("--no-gui", action="store_true", help="ask in the terminal instead of opening a window")
+
+    sp = sub.add_parser("watch", help="run in the background and notice meetings automatically")
+    g = sp.add_mutually_exclusive_group()
+    g.add_argument("--autostart", action="store_true", default=None, help="also start at every login")
+    g.add_argument("--no-autostart", dest="autostart", action="store_false", help="stop starting at login")
+    sp.set_defaults(func=cmd_watch)
 
     sp = sub.add_parser("record", help="record a meeting now")
     outputs(sp)
