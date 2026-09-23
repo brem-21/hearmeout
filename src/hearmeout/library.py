@@ -172,6 +172,7 @@ class PendingRecording:
     title_hint: str | None
     started: datetime
     duration_s: float
+    people: list[str] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -188,7 +189,10 @@ class PendingRecording:
         try:
             return json.loads((self.session / "notes.json").read_text())["title"]
         except (OSError, ValueError, KeyError):
-            return f"{self.app or 'Recording'}, {self.started:%H:%M}"
+            pass
+        if self.people:
+            return f"Call with {', '.join(p.split()[0] for p in self.people)}"
+        return f"{self.app or 'Recording'}, {self.started:%H:%M}"
 
     @property
     def error(self) -> str | None:
@@ -202,10 +206,7 @@ class PendingRecording:
 def pending_recordings() -> list[PendingRecording]:
     out = []
     for session in reversed(pipeline.pending_sessions()):
-        try:
-            info = json.loads((session / "session.json").read_text())
-        except (OSError, ValueError):
-            info = {}
+        info = pipeline.session_info(session)
         try:
             duration = sf.info(session / "audio.ogg").duration
         except RuntimeError:
@@ -214,7 +215,8 @@ def pending_recordings() -> list[PendingRecording]:
             started = datetime.strptime(session.name, pipeline.SESSION_FMT)
         except ValueError:
             continue
-        out.append(PendingRecording(session, info.get("app"), info.get("title_hint"), started, duration))
+        out.append(PendingRecording(session, info.get("app"), info.get("title_hint"), started, duration,
+                                    info.get("people") or []))
     return out
 
 

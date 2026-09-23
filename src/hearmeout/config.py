@@ -55,6 +55,8 @@ class Settings:
     stop_after: int = 15  # seconds after the call app releases the mic before recording stops
     silence_stop: int = 120  # stop when nobody has spoken for this many seconds (0 = never)
 
+    appearance: str = "system"  # "system", "light" or "dark"
+
 
 # env var -> (settings attribute, converter)
 _ENV = {
@@ -85,6 +87,7 @@ _TOML = {
     ("detect", "ignore"): "detect_ignore",
     ("detect", "stop_after"): "stop_after",
     ("detect", "stop_after_silence"): "silence_stop",
+    ("app", "appearance"): "appearance",
 }
 
 
@@ -148,6 +151,9 @@ mode = "ask"       # when a meeting starts: "ask", "auto" (record without asking
 ignore = []        # apps never to ask about, e.g. ["firefox", "telegram"]
 stop_after = 15    # seconds after a call ends before recording stops
 stop_after_silence = 120   # stop when nobody has spoken for this long (seconds; 0 = never)
+
+[app]
+appearance = "system"   # "system", "light" or "dark"
 """
         )
         CONFIG_FILE.chmod(0o600)

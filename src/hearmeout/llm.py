@@ -25,6 +25,9 @@ class MeetingNotes(BaseModel):
     decisions: list[str] = Field(description="Decisions that were made. Empty if none.")
     action_items: list[ActionItem] = Field(description="Every task or follow-up someone committed to or was asked to do.")
     participants: list[str] = Field(description="Names of people who spoke or were mentioned as attending.")
+    other_speakers: list[str] = Field(default_factory=list, description=(
+        "Names of the people speaking on the 'Them' track, if they can be identified (for example the user "
+        "addresses them by name, or they introduce themselves). Empty if unknown."))
 
 
 SYSTEM = """You turn meeting transcripts into accurate notes.
@@ -46,7 +49,7 @@ Rules:
 - Every action item needs a short verbatim quote as evidence.
 - The meeting took place on {day} ({weekday}); resolve relative dates like "Friday" or "next week" against it.
 - Transcription can contain errors; interpret obvious mistakes sensibly.
-- Write in the language used in the meeting."""
+- Write in the language used in the meeting.{hint}"""
 
 
 def _strict(schema):
@@ -71,12 +74,15 @@ def _strict(schema):
 
 
 def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: str = "Me",
-              names: list[str] | None = None, day: date | None = None) -> MeetingNotes:
+              names: list[str] | None = None, day: date | None = None,
+              others: list[str] | None = None) -> MeetingNotes:
     day = day or date.today()
     names_text = ", ".join(f'"{n}"' for n in (names or []) if n) or "(name unknown)"
     messages = [
-        {"role": "system", "content": SYSTEM.format(me=me, names=names_text, day=day.isoformat(),
-                                                    weekday=day.strftime("%A"))},
+        {"role": "system", "content": SYSTEM.format(
+            me=me, names=names_text, day=day.isoformat(), weekday=day.strftime("%A"),
+            hint=(f"\n- The call window says the other side is: {', '.join(others)}. "
+                  "Use these names for 'Them' unless the transcript clearly says otherwise." if others else ""))},
         {"role": "user", "content": f"Transcript:\n\n{transcript}"},
     ]
     schema = _strict(MeetingNotes.model_json_schema())

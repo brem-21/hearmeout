@@ -74,6 +74,7 @@ class Call:
     # The devices the call is actually using (a headset, say), so the recording can follow them.
     mic: str | None = None      # source name
     speaker: str | None = None  # sink name
+    people: tuple[str, ...] = ()  # other people on the call, when the window says (e.g. a Slack DM)
 
 
 def _match(text: str, table: dict[str, list[str]]) -> str | None:
@@ -83,8 +84,30 @@ def _match(text: str, table: dict[str, list[str]]) -> str | None:
     return None
 
 
+# Window titles that name the person you're talking to. Group "name" may hold several, comma-separated.
+_PEOPLE = [
+    re.compile(r"^(?:\(\d+\)\s*)?(?P<name>[^|()]+?)\s*\(DM\)", re.I),                 # Slack: "Richard N (DM) - Team"
+    re.compile(r"^(?:\(\d+\)\s*)?Huddle(?: with|:)\s*(?P<name>[^|#]+?)\s*(?:[-–—|]|$)", re.I),  # Slack huddle
+    re.compile(r"^(?:\(\d+\)\s*)?(?:Call|Meeting|Chat) with\s+(?P<name>[^|]+?)\s*(?:[-–—|]|$)", re.I),  # Teams…
+    re.compile(r"^(?:\(\d+\)\s*)?@(?P<name>[^|/]+?)\s*[-–—]\s*Discord", re.I),        # Discord DM
+]
+
+
+def people_from_title(title: str) -> list[str]:
+    """Names in a window title like "Richard Elinam Nutsugah (DM) - AmaliTech - 2 new items"."""
+    for pattern in _PEOPLE:
+        m = pattern.search(title or "")
+        if m:
+            names = [n.strip() for n in re.split(r",|\band\b|&", m.group("name")) if n.strip()]
+            return [n for n in names if 1 < len(n) <= 60][:8]
+    return []
+
+
 def _clean_title(title: str) -> str | None:
+    if people_from_title(title):
+        return None  # a DM or 1:1 window names a person, not the meeting
     t = re.sub(r"^\(\d+\)\s*", "", title)                                   # "(25) Chat" -> "Chat"
+    t = re.sub(r"\s*[-–—]\s*\d+ new items?\b.*$", "", t, flags=re.I)             # Slack's unread counter
     t = re.sub(r"\s*[-–—|]\s*(Original profile|Mozilla Firefox|Brave|Google Chrome|Chromium|"
                r"Microsoft Edge|Vivaldi|Opera|Microsoft Teams|Slack|Zoom|Discord).*$", "", t, flags=re.I)
     t = re.sub(r"\s*[-–—|]\s*$", "", t).strip()
@@ -183,9 +206,10 @@ class Detector:
                     continue
                 windows = windows if windows is not None else self._windows.titles()
                 frag = CALL_APPS[app]
-                hint = next((h for cls, t in windows if any(f in cls for f in frag)
-                             for h in [_clean_title(t)] if h), None)
-                calls[key] = Call(key, app, hint, True, props.get("_source"), props.get("_sink"))
+                titles = [t for cls, t in windows if any(f in cls for f in frag)]
+                hint = next((h for t in titles for h in [_clean_title(t)] if h), None)
+                people = next((p for t in titles for p in [people_from_title(t)] if p), [])
+                calls[key] = Call(key, app, hint, True, props.get("_source"), props.get("_sink"), tuple(people))
                 continue
 
             browser = _match(text, BROWSERS)
@@ -196,12 +220,14 @@ class Detector:
                 windows = windows if windows is not None else self._windows.titles()
                 frag = BROWSERS[browser]
                 found = None
+                people: list[str] = []
                 for cls, t in windows:
                     if not any(f in cls for f in frag):
                         continue
                     for pattern, service in WEB_MEETINGS:
                         m = pattern.search(t)
                         if m:
+                            people = people_from_title(t)
                             hint = _clean_title(m.groupdict().get("name") or "") if m.groupdict().get("name") else None
                             found = (service, hint)
                             break
@@ -209,7 +235,7 @@ class Detector:
                         break
                 devices = (props.get("_source"), props.get("_sink"))
                 if found:
-                    calls[key] = Call(key, f"{found[0]} ({browser})", found[1], True, *devices)
+                    calls[key] = Call(key, f"{found[0]} ({browser})", found[1], True, *devices, tuple(people))
                 else:
                     calls[key] = Call(key, browser, None, False, *devices)
         return sorted(calls.values(), key=lambda c: not c.confident)

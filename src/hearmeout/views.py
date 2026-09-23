@@ -203,8 +203,7 @@ def _summary_md(notes) -> str:
 
 def from_meeting(meeting: obsidian.Meeting, app: str | None = None) -> MeetingData:
     """A recording whose notes are made but not saved yet."""
-    rows = [(u.speaker, u.start, u.text, u.speaker != "Them" and not u.speaker.startswith("Speaker "))
-            for u in meeting.utterances]
+    rows = [(u.speaker, u.start, u.text, u.speaker == meeting.me) for u in meeting.utterances]
     my, team = [], []
     notes = meeting.notes
     for i, a in enumerate(notes.action_items if notes else []):
@@ -221,9 +220,9 @@ def from_meeting(meeting: obsidian.Meeting, app: str | None = None) -> MeetingDa
                        my, team, rows, meeting.audio, meeting, has_notes=notes is not None)
 
 
-def from_saved(m, audio_length: float | None = None) -> MeetingData:
+def from_saved(m, audio_length: float | None = None, me: str = "Me") -> MeetingData:
     """A meeting already in Obsidian (library.SavedMeeting)."""
-    rows = [(sp, st, tx, sp != "Them" and not sp.startswith("Speaker ")) for sp, st, tx in m.transcript()]
+    rows = [(sp, st, tx, sp == me) for sp, st, tx in m.transcript()]
 
     def items(key: str) -> list[TaskItem]:
         out = []

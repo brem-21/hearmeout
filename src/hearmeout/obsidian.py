@@ -87,6 +87,7 @@ class Meeting:
     utterances: list[Utterance]
     notes: MeetingNotes | None = None
     audio: Path | None = None
+    me: str = "Me"  # the speaker label used for the user's own microphone
     # Tasks the user unticked in the review screen are left out of the saved notes.
     excluded_tasks: set[int] = field(default_factory=set)
 

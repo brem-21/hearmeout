@@ -15,13 +15,14 @@ import soundfile as sf
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
+    QApplication, QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
     QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import library, obsidian, theme
 from .gui import _load_choices, _save_choices
 from .player import Player
+from .settings import SettingsPage
 from .theme import T
 from .views import (
     ElidedLabel, MeetingData, MeetingView, SaveBar, badge, button, callout, card, divider, from_meeting,
@@ -197,7 +198,12 @@ class MainWindow(QMainWindow):
         self.list = QListWidget()
         self.list.setObjectName("Meetings")
         self.list.setVerticalScrollMode(QListWidget.ScrollPerPixel)
+        self.list.setSelectionMode(QListWidget.ExtendedSelection)  # Ctrl/Shift-click to pick several
         self.list.currentItemChanged.connect(lambda cur, _: self._select_item(cur))
+        self.list.itemSelectionChanged.connect(self._selection_changed)
+        self.list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.list.customContextMenuRequested.connect(self._context_menu)
+        QShortcut(QKeySequence.Delete, self.list, self._delete_selected, context=Qt.WidgetShortcut)
         s.addWidget(self.list, 1)
         s.addWidget(divider())
         foot = QHBoxLayout()
@@ -206,11 +212,13 @@ class MainWindow(QMainWindow):
         foot.addWidget(self.status_dot)
         self.status = ElidedLabel("", "muted")
         foot.addWidget(self.status, 1)
-        gear = button("", "settings", "ghost", tip="Settings (Ctrl+,)", icon_color=T["muted"])
-        menu = QMenu(gear)
-        menu.aboutToShow.connect(lambda: self._fill_menu(menu))
-        gear.setMenu(menu)
-        gear.setStyleSheet("QPushButton::menu-indicator { width: 0; image: none; }")
+        dark = theme.is_dark()
+        self.theme_btn = button("", "sun" if dark else "moon", "ghost", icon_color=T["muted"],
+                                tip="Switch to light mode" if dark else "Switch to dark mode",
+                                on_click=self._toggle_theme)
+        foot.addWidget(self.theme_btn)
+        gear = button("", "settings", "ghost", tip="Settings (Ctrl+,)", icon_color=T["muted"],
+                      on_click=self.open_settings)
         foot.addWidget(gear)
         s.addLayout(foot)
 
@@ -233,16 +241,21 @@ class MainWindow(QMainWindow):
         lay.addWidget(right, 1)
         self.setCentralWidget(root)
 
-    def _fill_menu(self, menu: QMenu) -> None:
-        menu.clear()
-        menu.addAction(theme.icon("settings", T["text"], 16), "Settings…", self.open_settings)
-        menu.addSeparator()
-        self.w.fill_settings_menu(menu)
+    def _toggle_theme(self) -> None:
+        mode = "light" if theme.is_dark() else "dark"
+        from . import config
+        s = config.load()
+        s.appearance = mode
+        config.save(s)
+        theme.apply(QApplication.instance(), mode)
+        self.retheme()
 
     def retheme(self) -> None:
-        """The system switched between light and dark: rebuild with the new colours."""
+        """Light/dark changed: rebuild everything with the new colours."""
         if any(b.busy for b in self.bars.values()):
             return
+        if isinstance(self.detail.currentWidget(), SettingsPage) and self.detail.currentWidget().dirty:
+            self.detail.currentWidget().dirty = False  # keep it simple: unsaved edits there are dropped
         cur, query = self.current, self.search.text()
         self.views.clear()
         self.bars.clear()
@@ -311,6 +324,11 @@ class MainWindow(QMainWindow):
         self.list.blockSignals(False)
 
         keys = [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())]
+        if self.current == "settings":
+            if force or not isinstance(self.detail.currentWidget(), SettingsPage):
+                self._show(self._settings_page())
+            self._tick()
+            return
         target = self.current if self.current in keys else next((k for k in keys if k), None)
         if target:
             self._set_current(target, rebuild=force or target != self.current or self._stale(target))
@@ -335,7 +353,29 @@ class MainWindow(QMainWindow):
         self.current = key
         self.refresh()
 
+    def _leave_settings(self) -> bool:
+        """Leaving the Settings page: offer to save unsaved changes. False = stay."""
+        page = self.detail.currentWidget()
+        if not isinstance(page, SettingsPage) or not page.dirty:
+            return True
+        box = QMessageBox(self)
+        box.setWindowTitle("Unsaved settings")
+        box.setText("Save your changes to the settings?")
+        save = box.addButton("Save", QMessageBox.AcceptRole)
+        discard = box.addButton("Discard", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        if box.clickedButton() is save:
+            page.save()
+            return True
+        return box.clickedButton() is discard
+
     def _set_current(self, key: str, rebuild: bool = True) -> None:
+        if key != self.current and not self._leave_settings():
+            self.list.blockSignals(True)
+            self.list.clearSelection()
+            self.list.blockSignals(False)
+            return
         for i in range(self.list.count()):
             if self.list.item(i).data(Qt.UserRole) == key:
                 self.list.blockSignals(True)
@@ -347,10 +387,171 @@ class MainWindow(QMainWindow):
             self._show(self._page_for(key))
 
     def _select_item(self, item: QListWidgetItem | None) -> None:
+        if len(self._selected_keys()) > 1:
+            return  # several picked: the selection page is showing
         if item is not None and item.data(Qt.UserRole):
             self._set_current(item.data(Qt.UserRole))
-        elif self.current:  # a day heading: keep the meeting selected
+        elif self.current and self.current != "settings":  # a day heading: keep the meeting selected
             self._set_current(self.current, rebuild=False)
+
+    # ------------------------------------------------------------------ selecting several + deleting
+
+    def _selected_keys(self) -> list[str]:
+        return [i.data(Qt.UserRole) for i in self.list.selectedItems()
+                if i.data(Qt.UserRole) and i.data(Qt.UserRole) != "recording"]
+
+    def _selection_changed(self) -> None:
+        keys = self._selected_keys()
+        if len(keys) > 1:
+            self._show(self._selection_page(keys))
+        elif len(keys) == 1 and keys[0] != self.current:
+            self._set_current(keys[0])
+        elif len(keys) == 1 and getattr(self.detail.currentWidget(), "state_key", "").startswith("selection"):
+            self._set_current(keys[0], rebuild=True)
+
+    def _context_menu(self, pos) -> None:
+        item = self.list.itemAt(pos)
+        if item is None or not item.data(Qt.UserRole) or item.data(Qt.UserRole) == "recording":
+            return
+        if not item.isSelected():
+            self.list.clearSelection()
+            item.setSelected(True)
+        keys = self._selected_keys()
+        menu = QMenu(self)
+        if len(keys) == 1:
+            obj = self.items.get(keys[0])
+            if isinstance(obj, library.SavedMeeting):
+                main = obsidian.main_note(list(obj.files.values()))
+                if main:
+                    menu.addAction(theme.icon("external", T["text"], 16), "Open in Obsidian",
+                                   lambda: QDesktopServices.openUrl(QUrl(obsidian.open_uri(obj.vault, main))))
+                menu.addAction(theme.icon("folder", T["text"], 16), "Show folder",
+                               lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(obj.folder))))
+            elif isinstance(obj, library.PendingRecording) and not obj.ready and obj.session not in self.w.jobs:
+                menu.addAction(theme.icon("sparkle", T["text"], 16), "Make notes",
+                               lambda: self.w.process(obj.session))
+            menu.addSeparator()
+        pending = [k for k in self.items if k.startswith("pending:")]
+        if pending:
+            menu.addAction("Select all recordings to save", lambda: self._select_keys(pending))
+        menu.addAction("Select everything", lambda: self._select_keys(list(self.items)))
+        menu.addSeparator()
+        menu.addAction(theme.icon("trash", T["red"], 16),
+                       f"Move {len(keys)} to Trash…" if len(keys) > 1 else "Move to Trash…", self._delete_selected)
+        menu.exec(self.list.viewport().mapToGlobal(pos))
+
+    def _select_keys(self, keys: list[str]) -> None:
+        self.list.blockSignals(True)
+        self.list.clearSelection()
+        for i in range(self.list.count()):
+            if self.list.item(i).data(Qt.UserRole) in keys and self.list.item(i).data(Qt.UserRole) != "recording":
+                self.list.item(i).setSelected(True)
+        self.list.blockSignals(False)
+        self._selection_changed()
+
+    def _selection_page(self, keys: list[str]) -> QWidget:
+        page, lay = self._page("selection:" + ",".join(keys))
+        pending = [self.items[k] for k in keys if isinstance(self.items.get(k), library.PendingRecording)]
+        saved = [self.items[k] for k in keys if isinstance(self.items.get(k), library.SavedMeeting)]
+        lay.addStretch(1)
+        col = QVBoxLayout()
+        col.setSpacing(10)
+        col.addWidget(icon_label("tasks", T["accent"], 40), 0, Qt.AlignHCenter)
+        col.addWidget(label(f"{len(keys)} selected", "h1"), 0, Qt.AlignHCenter)
+        parts = []
+        if pending:
+            parts.append(f"{len(pending)} recording{'s' if len(pending) != 1 else ''} not saved yet")
+        if saved:
+            parts.append(f"{len(saved)} meeting{'s' if len(saved) != 1 else ''} saved in Obsidian")
+        col.addWidget(label(" and ".join(parts), "muted"), 0, Qt.AlignHCenter)
+        box = card()
+        box.setMaximumWidth(520)
+        bl = QVBoxLayout(box)
+        bl.setContentsMargins(16, 12, 16, 12)
+        bl.setSpacing(6)
+        for obj in (pending + saved)[:8]:
+            row = QHBoxLayout()
+            row.addWidget(icon_label("mic" if isinstance(obj, library.PendingRecording) else "gem", T["muted"], 14))
+            row.addWidget(ElidedLabel(obj.title), 1)
+            row.addWidget(label(library.when(obj.started), "muted"))
+            bl.addLayout(row)
+        if len(keys) > 8:
+            bl.addWidget(label(f"…and {len(keys) - 8} more", "muted"))
+        col.addWidget(box, 0, Qt.AlignHCenter)
+        col.addSpacing(8)
+        btns = QHBoxLayout()
+        btns.addStretch(1)
+        btns.addWidget(button("Cancel", on_click=self._clear_selection))
+        btns.addWidget(button(f"Move {len(keys)} to Trash", "trash", "danger", on_click=self._delete_selected))
+        btns.addStretch(1)
+        col.addLayout(btns)
+        col.addWidget(label("You can restore them from your system's Trash.", "faint"), 0, Qt.AlignHCenter)
+        lay.addLayout(col)
+        lay.addStretch(2)
+        return page
+
+    def _clear_selection(self) -> None:
+        cur = self.current
+        self.list.clearSelection()
+        if cur:
+            self._set_current(cur, rebuild=True)
+
+    def _delete_selected(self) -> None:
+        keys = self._selected_keys() or ([self.current] if self.current and self.current not in
+                                         ("recording", "settings") else [])
+        objs = [self.items[k] for k in keys if k in self.items]
+        busy = [o for o in objs if isinstance(o, library.PendingRecording) and o.session in self.w.jobs]
+        objs = [o for o in objs if o not in busy]
+        if not objs:
+            if busy:
+                QMessageBox.information(self, "Still making notes",
+                                        "That recording is being turned into notes. Try again when it's done.")
+            return
+        saved = [o for o in objs if isinstance(o, library.SavedMeeting)]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("Move to Trash?")
+        if len(objs) == 1:
+            box.setText(f"Move “{objs[0].title}” to the Trash?")
+        else:
+            box.setText(f"Move {len(objs)} items to the Trash?")
+        info = []
+        if saved:
+            info.append("Their notes will be removed from your Obsidian vault." if len(saved) > 1 or len(objs) > 1
+                        else "Its notes will be removed from your Obsidian vault.")
+        info.append("You can restore anything from your system's Trash.")
+        if busy:
+            info.append(f"{len(busy)} still being turned into notes will be left alone.")
+        box.setInformativeText(" ".join(info))
+        go = box.addButton("Move to Trash", QMessageBox.DestructiveRole)
+        box.addButton(QMessageBox.Cancel)
+        box.exec()
+        if box.clickedButton() is not go:
+            return
+        from .watch import move_to_trash
+        failed = []
+        for o in objs:
+            if isinstance(o, library.PendingRecording):
+                if self.player.path == o.audio:
+                    self.player.stop()
+                view = self.views.pop(o.session, None)
+                self.bars.pop(o.session, None)
+                if view is not None:
+                    self.detail.removeWidget(view)
+                    view.deleteLater()
+                if not self.w.delete(o.session):
+                    failed.append(o.title)
+            else:
+                if self.player.path == o.audio:
+                    self.player.stop()
+                if not move_to_trash(o.folder):
+                    failed.append(o.title)
+        if failed:
+            QMessageBox.warning(self, "Couldn't move to Trash",
+                                "These couldn't be moved to the Trash:\n\n" + "\n".join(failed))
+        self.list.clearSelection()
+        self.current = None
+        self.refresh()
 
     def _show(self, page: QWidget) -> None:
         old = self.detail.currentWidget()
@@ -655,7 +856,8 @@ class MainWindow(QMainWindow):
         open_btn.setEnabled(main is not None)
         folder_btn = button("", "folder", "ghost", tip="Show the notes' folder", icon_color=T["muted"],
                             on_click=lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(m.folder))))
-        view = MeetingView(from_saved(m, length), self.player, actions=[folder_btn, open_btn],
+        view = MeetingView(from_saved(m, length, self.w.s.user_name or "Me"), self.player,
+                           actions=[folder_btn, open_btn],
                            search=self.search.text().strip())
         view.state_key = m.key
         if self.banner_for == m.key:
@@ -696,9 +898,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ settings + window
 
     def open_settings(self) -> None:
-        from .settings import SettingsDialog
-        if SettingsDialog(self.w, self).exec():
-            self.refresh(force=True)
+        if self.current == "settings":
+            return
+        if not self._leave_settings():
+            return
+        self.list.blockSignals(True)
+        self.list.clearSelection()
+        self.list.blockSignals(False)
+        self.current = "settings"
+        self._show(self._settings_page())
+
+    def _settings_page(self) -> QWidget:
+        page = SettingsPage(self.w)
+        page.saved.connect(lambda: QTimer.singleShot(0, lambda: self.refresh(force=True)
+                                                     if not page.dirty and page.status.text().startswith("✓")
+                                                     else self._show(self._settings_page())))
+        page.appearance_changed.connect(lambda _: QTimer.singleShot(0, self.retheme))
+        return page
 
     def changeEvent(self, event) -> None:
         if event.type() == QEvent.ActivationChange and self.isActiveWindow():

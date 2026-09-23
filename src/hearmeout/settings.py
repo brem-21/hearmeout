@@ -1,5 +1,5 @@
-"""Settings window: your name, API keys, model, vault and meeting detection,
-so nobody has to edit config.toml by hand."""
+"""The Settings page inside the app: your name, keys, model, vault, meeting
+detection and appearance. Changes are saved with the Save button."""
 
 from __future__ import annotations
 
@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx
 from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
-    QRadioButton, QScrollArea, QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
+    QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
 from . import config, obsidian, theme
@@ -46,11 +46,9 @@ class _KeyCheck(QThread):
             if self.router:
                 url = f"{self.base_url}/key" if "openrouter" in self.base_url else f"{self.base_url}/models"
                 r = httpx.get(url, headers={"Authorization": f"Bearer {self.router}"}, timeout=10)
-                ok = r.status_code == 200
-                msg = "Works"
+                ok, msg = r.status_code == 200, "Works"
                 if ok and "openrouter" in self.base_url:
-                    data = r.json().get("data", {})
-                    left = data.get("limit_remaining")
+                    left = r.json().get("data", {}).get("limit_remaining")
                     if left is not None:
                         msg = f"Works · ${left:.2f} credit left"
                 self.done.emit("router", ok, msg if ok else f"Rejected (HTTP {r.status_code})")
@@ -81,7 +79,7 @@ def _section(title: str, icon: str, subtitle: str = "") -> tuple[QWidget, QFormL
     return c, form
 
 
-def _secret(value: str, placeholder: str) -> tuple[QWidget, QLineEdit]:
+def _secret(value: str, placeholder: str) -> QLineEdit:
     edit = QLineEdit(value)
     edit.setEchoMode(QLineEdit.Password)
     edit.setPlaceholderText(placeholder)
@@ -89,23 +87,49 @@ def _secret(value: str, placeholder: str) -> tuple[QWidget, QLineEdit]:
     show.setToolTip("Show / hide")
     show.triggered.connect(lambda: edit.setEchoMode(
         QLineEdit.Normal if edit.echoMode() == QLineEdit.Password else QLineEdit.Password))
-    return edit, edit
+    return edit
 
 
-class SettingsDialog(QDialog):
-    def __init__(self, watcher, parent=None):
-        super().__init__(parent)
+class SettingsPage(QWidget):
+    saved = Signal()               # settings were saved (or changes discarded)
+    appearance_changed = Signal(str)
+
+    def __init__(self, watcher):
+        super().__init__()
         from . import watch
+        self.setObjectName("Page")
+        self.state_key = "settings"
         self.w, self.watch = watcher, watch
         self.s = config.load()
-        self.setWindowTitle("Settings · Hear Me Out")
-        self.resize(720, 760)
+        self._loading = True
 
         body = QWidget()
+        body.setObjectName("Page")
         col = QVBoxLayout(body)
-        col.setContentsMargins(24, 20, 24, 20)
+        col.setContentsMargins(32, 24, 32, 24)
         col.setSpacing(14)
         col.addWidget(label("Settings", "h1"))
+
+        # --- appearance
+        c, f = _section("Appearance", "sun")
+        self.appearance = QButtonGroup(self)
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        for key, text, icon in (("system", "Match system", "monitor"), ("light", "Light", "sun"),
+                                ("dark", "Dark", "moon")):
+            b = QPushButton(text)
+            b.setProperty("variant", "chip")
+            b.setProperty("mode", key)
+            b.setCheckable(True)
+            b.setChecked(key == theme.MODE)
+            b.setIcon(theme.icon(icon, T["accent"] if key == theme.MODE else T["muted"], 15))
+            b.setCursor(Qt.PointingHandCursor)
+            self.appearance.addButton(b)
+            row.addWidget(b)
+        row.addStretch(1)
+        self.appearance.buttonClicked.connect(self._appearance_clicked)
+        f.addRow("Theme", row)
+        col.addWidget(c)
 
         # --- you
         c, f = _section("You", "users", "So Hear Me Out knows which tasks in a meeting are yours.")
@@ -120,11 +144,11 @@ class SettingsDialog(QDialog):
         # --- services
         c, f = _section("Transcription and notes", "key",
                         "Your own keys: nothing goes through anyone else's server. "
-                        "They're stored in ~/.config/hearmeout/config.toml, readable only by you.")
-        w, self.eleven = _secret(self.s.elevenlabs_api_key, "sk_…")
-        f.addRow("ElevenLabs key", w)
-        w, self.router = _secret(self.s.openrouter_api_key, "sk-or-v1-…")
-        f.addRow("OpenRouter key", w)
+                        "They're kept on this computer, readable only by you.")
+        self.eleven = _secret(self.s.elevenlabs_api_key, "sk_…")
+        f.addRow("ElevenLabs key", self.eleven)
+        self.router = _secret(self.s.openrouter_api_key, "sk-or-v1-…")
+        f.addRow("OpenRouter key", self.router)
         self.model = QComboBox()
         self.model.setEditable(True)
         self.model.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -151,16 +175,13 @@ class SettingsDialog(QDialog):
         self.vault = QComboBox()
         self.vault.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.vault.setMinimumContentsLength(18)
+        self.vault.addItem("The vault Obsidian opened last", "")
         for v in obsidian.find_vaults():
-            self.vault.addItem(theme.icon("gem", T["accent"]), v.name, str(v))
-            self.vault.setItemData(self.vault.count() - 1, str(v), Qt.ToolTipRole)
+            self._add_vault(v)
         configured = str(Path(self.s.vault).expanduser()) if self.s.vault else ""
         if configured and self.vault.findData(configured) < 0:
-            self.vault.addItem(theme.icon("gem", T["accent"]), Path(configured).name, configured)
-            self.vault.setItemData(self.vault.count() - 1, configured, Qt.ToolTipRole)
-        self.vault.insertItem(0, "The vault Obsidian opened last", "")
-        self.vault.setCurrentIndex(max(0, self.vault.findData(str(Path(self.s.vault).expanduser()))
-                                       if self.s.vault else 0))
+            self._add_vault(Path(configured))
+        self.vault.setCurrentIndex(max(0, self.vault.findData(configured)))
         vrow = QHBoxLayout()
         vrow.addWidget(self.vault, 1)
         vrow.addWidget(button("Browse…", "folder", on_click=self._browse))
@@ -196,24 +217,23 @@ class SettingsDialog(QDialog):
         f.addRow("When a call starts", modes)
         self.silence = QComboBox()
         for minutes in (0, 1, 2, 3, 5, 10, 15, 30):
-            self.silence.addItem("Never" if minutes == 0 else f"After {minutes} minute{'s' if minutes > 1 else ''} "
-                                 "with nobody talking", minutes * 60)
-        current_silence = self.s.silence_stop
-        if self.silence.findData(current_silence) < 0:
-            self.silence.addItem(f"After {current_silence} seconds with nobody talking", current_silence)
-        self.silence.setCurrentIndex(self.silence.findData(current_silence))
+            self.silence.addItem("Never" if minutes == 0 else
+                                 f"After {minutes} minute{'s' if minutes > 1 else ''} with nobody talking", minutes * 60)
+        if self.silence.findData(self.s.silence_stop) < 0:
+            self.silence.addItem(f"After {self.s.silence_stop} seconds with nobody talking", self.s.silence_stop)
+        self.silence.setCurrentIndex(self.silence.findData(self.s.silence_stop))
         self.silence.setToolTip("You get a warning with a Keep recording button 30 seconds before it stops.")
         f.addRow("Stop recording", self.silence)
         self.login = QCheckBox("Start Hear Me Out when I log in")
         self.login.setChecked(watch.autostart_enabled())
         f.addRow("", self.login)
-        self.ignored = sorted(self.w.ignore) if self.w else sorted(self.s.detect_ignore)
-        if self.ignored:
+        self.unignore: dict[str, QCheckBox] = {}
+        ignored = sorted(self.w.ignore) if self.w else sorted(self.s.detect_ignore)
+        if ignored:
             box = QVBoxLayout()
             box.setSpacing(4)
-            self.unignore: dict[str, QCheckBox] = {}
-            for key in self.ignored:
-                cb = QCheckBox(f"{key.title()}: never ask")
+            for key in ignored:
+                cb = QCheckBox(f"Never ask about {key.title()}")
                 cb.setChecked(True)
                 self.unignore[key] = cb
                 box.addWidget(cb)
@@ -225,27 +245,72 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(body)
-        foot = QHBoxLayout()
-        foot.setContentsMargins(24, 10, 24, 16)
-        foot.addWidget(label(f"Settings file: {config.CONFIG_FILE}", "faint"), 1)
-        foot.addWidget(button("Cancel", on_click=self.reject))
-        save = button("Save settings", "check", "primary", on_click=self._save)
-        save.setDefault(True)
-        foot.addWidget(save)
+
+        # footer
+        self.status = label("", "muted")
+        self.discard = button("Discard changes", on_click=self.discard_changes)
+        self.save_btn = button("Save changes", "check", "primary", on_click=self.save)
+        foot_w = QWidget()
+        foot_w.setObjectName("Page")
+        foot = QHBoxLayout(foot_w)
+        foot.setContentsMargins(32, 10, 32, 16)
+        foot.addWidget(self.status, 1)
+        foot.addWidget(self.discard)
+        foot.addWidget(self.save_btn)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         lay.addWidget(scroll, 1)
-        lay.addLayout(foot)
+        lay.addWidget(foot_w)
+
+        for w in (self.name, self.aliases, self.eleven, self.router, self.folder):
+            w.textChanged.connect(self._changed)
+        for w in (self.model, self.vault, self.silence):
+            w.currentIndexChanged.connect(self._changed)
+        self.model.editTextChanged.connect(self._changed)
+        for w in (*self.items.values(), self.login, *self.unignore.values()):
+            w.toggled.connect(self._changed)
+        self.mode.buttonToggled.connect(self._changed)
         self._checker: _KeyCheck | None = None
         self._results: dict[str, tuple[bool, str]] = {}
+        self._loading = False
+        self.dirty = False
+        self._update_footer()
+
+    # --- state
+
+    def _changed(self, *_) -> None:
+        if not self._loading:
+            self.dirty = True
+            self._update_footer()
+
+    def _update_footer(self) -> None:
+        self.save_btn.setEnabled(self.dirty)
+        self.discard.setEnabled(self.dirty)
+        if self.dirty:
+            self.status.setText("You have unsaved changes")
+            self.status.setStyleSheet(f"color: {T['amber']};")
+
+    def _add_vault(self, v: Path) -> None:
+        self.vault.addItem(theme.icon("gem", T["accent"]), v.name, str(v))
+        self.vault.setItemData(self.vault.count() - 1, str(v), Qt.ToolTipRole)
 
     def _browse(self) -> None:
         path = QFileDialog.getExistingDirectory(self, "Choose your Obsidian vault", str(Path.home()))
         if path:
             if self.vault.findData(path) < 0:
-                self.vault.addItem(theme.icon("gem", T["accent"]), Path(path).name, path)
+                self._add_vault(Path(path))
             self.vault.setCurrentIndex(self.vault.findData(path))
+
+    def _appearance_clicked(self, b: QPushButton) -> None:
+        """Light / dark / system takes effect (and is saved) straight away."""
+        mode = b.property("mode")
+        s = config.load()
+        s.appearance = mode
+        config.save(s)
+        self.s.appearance = mode
+        theme.apply(QApplication.instance(), mode)
+        self.appearance_changed.emit(mode)
 
     def _model_id(self) -> str:
         text = self.model.currentText().strip()
@@ -271,8 +336,10 @@ class SettingsDialog(QDialog):
                 parts.append(f'<span style="color:{colour}">{"✓" if good else "✗"} {name}: {text}</span>')
         self.check_result.setText("<br>".join(parts))
 
-    def _save(self) -> None:
-        s = self.s
+    # --- actions
+
+    def save(self) -> None:
+        s = config.load()
         s.user_name = self.name.text().strip()
         s.user_aliases = [a.strip() for a in self.aliases.text().split(",") if a.strip()]
         s.elevenlabs_api_key = self.eleven.text().strip()
@@ -284,12 +351,23 @@ class SettingsDialog(QDialog):
         s.silence_stop = int(self.silence.currentData())
         mode = next(b.property("mode") for b in self.mode.buttons() if b.isChecked())
         s.detect = mode
+        s.appearance = theme.MODE
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:
             self.w.s = config.load()
             self.w.set_mode(mode)
-            for key, cb in getattr(self, "unignore", {}).items():
+            for key, cb in self.unignore.items():
                 if not cb.isChecked():
                     self.w.set_ignored(key, False)
-        self.accept()
+        self.s = s
+        self.dirty = False
+        self._update_footer()
+        self.status.setText("✓ Settings saved")
+        self.status.setStyleSheet(f"color: {T['green']}; font-weight: 600;")
+        self.saved.emit()
+
+    def discard_changes(self) -> None:
+        """Put every field back to what's saved (the window rebuilds this page)."""
+        self.dirty = False
+        self.saved.emit()

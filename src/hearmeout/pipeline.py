@@ -15,17 +15,40 @@ from typing import Callable
 
 import soundfile as sf
 
-from . import config, llm, obsidian, stt
+from . import config, detect, llm, obsidian, stt
 
 SESSION_FMT = "%Y-%m-%d_%H-%M-%S"
 
 
-def new_session(app: str | None = None, title_hint: str | None = None) -> Path:
+def new_session(app: str | None = None, title_hint: str | None = None, people: list[str] | None = None) -> Path:
     """Create a session folder for a new recording, remembering where it came from."""
     path = config.DATA_DIR / "recordings" / datetime.now().strftime(SESSION_FMT)
     path.mkdir(parents=True, exist_ok=True)
-    (path / "session.json").write_text(json.dumps({"app": app, "title_hint": title_hint}))
+    (path / "session.json").write_text(json.dumps({"app": app, "title_hint": title_hint,
+                                                   "people": list(people or [])}))
     return path
+
+
+def session_info(session: Path) -> dict:
+    """app, title_hint and people for a recording (older recordings: worked out from the title)."""
+    try:
+        info = json.loads((session / "session.json").read_text())
+    except (OSError, ValueError):
+        info = {}
+    hint = info.get("title_hint") or ""
+    if not info.get("people"):
+        info["people"] = detect.people_from_title(hint)
+    if hint and detect.people_from_title(hint):
+        info["title_hint"] = None  # "Richard N (DM) - Team" names a person, not the meeting
+    return info
+
+
+def other_speaker(notes, people: list[str]) -> str | None:
+    """The name to show instead of "Them" in a one-on-one, if we know it."""
+    if len(people) == 1:
+        return people[0]
+    found = [n for n in (notes.other_speakers if notes else []) if n]
+    return found[0] if len(found) == 1 else None
 
 
 def pending_sessions() -> list[Path]:
@@ -80,10 +103,8 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
         duration = sf.info(audio_file).duration
     except RuntimeError:
         duration = 0.0  # a format libsndfile can't read (e.g. mp4); ElevenLabs still can
-    try:
-        info = json.loads((work / "session.json").read_text())
-    except (OSError, ValueError):
-        info = {}
+    info = session_info(work)
+    people = info.get("people") or []
     me = s.user_name or "Me"
 
     # 1. Transcript
@@ -111,14 +132,25 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
         status(f"Writing notes with {s.llm_model}…")
         notes = llm.summarize(stt.as_text(utterances), api_key=s.openrouter_api_key, base_url=s.llm_base_url,
                               model=s.llm_model, me=me, names=[s.user_name, *s.user_aliases],
-                              day=started.date())
+                              day=started.date(), others=people)
         cached_notes.write_text(llm.notes_to_json(notes))
     else:
         status("No model API key (OPENROUTER_API_KEY), so only the transcript can be saved.")
 
+    # One-on-one: show the other person's name instead of "Them".
+    other = other_speaker(notes, people)
+    if other and other != me:
+        for u in utterances:
+            if u.speaker == "Them":
+                u.speaker = other
+        if notes and other not in notes.participants:
+            notes.participants.append(other)
+    elif notes and people:
+        notes.participants += [p for p in people if p not in notes.participants]
+
     title = title or info.get("title_hint") or (notes.title if notes else None) or f"Meeting {started:%H:%M}"
     meeting = obsidian.Meeting(title=title, started=started, duration_s=duration or utterances[-1].end,
-                               utterances=utterances, notes=notes, audio=audio_file)
+                               utterances=utterances, notes=notes, audio=audio_file, me=me)
     return meeting, work
 
 

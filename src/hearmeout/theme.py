@@ -30,9 +30,12 @@ DARK = {
 }
 
 T: dict[str, str] = dict(LIGHT)  # the tokens in use right now
+MODE = "system"                  # "system", "light" or "dark", as chosen in Settings
 
 
 def is_dark() -> bool:
+    if MODE in ("light", "dark"):
+        return MODE == "dark"
     hints = QGuiApplication.styleHints()
     try:
         scheme = hints.colorScheme()
@@ -89,6 +92,10 @@ _ICONS = {
     "key": '<circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/>',
     "eye": '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/>'
            '<circle cx="12" cy="12" r="2.8"/>',
+    "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4'
+           'M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
+    "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
+    "monitor": '<rect x="3" y="4.5" width="18" height="12" rx="2"/><path d="M8.5 20h7M12 16.5V20"/>',
     "wave": '<line x1="4" y1="10" x2="4" y2="14"/><line x1="8" y1="7" x2="8" y2="17"/>'
             '<line x1="12" y1="4" x2="12" y2="20"/><line x1="16" y1="8" x2="16" y2="16"/>'
             '<line x1="20" y1="10.5" x2="20" y2="13.5"/>',
@@ -252,8 +259,11 @@ QSplitter::handle {{ background: {t['border']}; width: 1px; }}
 """
 
 
-def apply(app: QApplication) -> None:
-    """Use Hear Me Out's theme (and keep following the system's light/dark setting)."""
+def apply(app: QApplication, mode: str | None = None) -> None:
+    """Use Hear Me Out's theme: light, dark, or whatever the system uses."""
+    global MODE
+    if mode is not None:
+        MODE = mode if mode in ("system", "light", "dark") else "system"
     T.clear()
     T.update(DARK if is_dark() else LIGHT)
     app.setStyle("Fusion")
@@ -269,8 +279,13 @@ def apply(app: QApplication) -> None:
 
 
 def follow_system(app: QApplication, on_change) -> None:
+    """When set to "system", switch along with the desktop's light/dark setting."""
+    def changed(*_):
+        if MODE == "system":
+            apply(app)
+            on_change()
     try:
-        QGuiApplication.styleHints().colorSchemeChanged.connect(lambda *_: (apply(app), on_change()))
+        QGuiApplication.styleHints().colorSchemeChanged.connect(changed)
     except AttributeError:
         pass
 

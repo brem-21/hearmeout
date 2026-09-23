@@ -15,8 +15,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QLockFile, QObject, QThread, QTimer, QUrl, Signal
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QFile, QLockFile, QObject, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -112,6 +112,11 @@ def _duration(sec: int) -> str:
     if m and not s:
         return f"{m} minute{'s' if m != 1 else ''}"
     return f"{m}:{s:02d} minutes" if m else f"{s} seconds"
+
+
+def move_to_trash(path: Path) -> bool:
+    """Move a file or folder to the desktop's Trash, so it can be restored."""
+    return path.exists() and QFile.moveToTrash(str(path))
 
 
 def _short(app: str) -> str:
@@ -263,7 +268,8 @@ class Watcher(QObject):
             summary, question = f"Meeting detected: {call.app}", "Record it and take notes?"
         else:
             summary, question = f"{call.app} is using your microphone", "Is this a meeting? Record it and take notes?"
-        body = (f"“{call.title_hint}”\n" if call.title_hint else "") + question
+        who = f"With {', '.join(call.people)}\n" if call.people else ""
+        body = (f"“{call.title_hint}”\n" if call.title_hint else "") + who + question
         if self.notifier.actions:
             self.ask_id = self.notifier.show(summary, body, [("record", "Record"), ("skip", "Not now"),
                                                              ("never", f"Never for {_short(call.app)}")], sticky=True)
@@ -308,7 +314,8 @@ class Watcher(QObject):
             self.asked, self.ask_id = None, 0
         self.s = config.load()  # pick up any config edits
         self.session = pipeline.new_session(app=call.app if call else None,
-                                            title_hint=call.title_hint if call else None)
+                                            title_hint=call.title_hint if call else None,
+                                            people=list(call.people) if call else None)
         self.recorder = audio.Recorder(self.session)
         try:
             self.recorder.start(call.mic if call else None, call.speaker if call else None)
@@ -396,10 +403,18 @@ class Watcher(QObject):
         pipeline.cleanup(session)
         self.changed.emit()
 
-    def delete(self, session: Path) -> None:
+    def delete(self, session: Path) -> bool:
+        """Move a recording to the Trash. Not while it's being recorded or turned into notes."""
         if session in self.jobs or session == self.session:
-            return
-        self.finish(session)
+            return False
+        self.prepared.pop(session, None)
+        for nid, s in list(self.ready_ids.items()):
+            if s == session:
+                self.notifier.close(nid)
+                del self.ready_ids[nid]
+        ok = move_to_trash(session)
+        self.changed.emit()
+        return ok
 
     # ------------------------------------------------------------------ settings
 
@@ -429,8 +444,7 @@ class Watcher(QObject):
         login = QAction("Start at login", m, checkable=True, checked=autostart_enabled())
         login.toggled.connect(set_autostart)
         m.addAction(login)
-        m.addAction("Settings file…", lambda: QDesktopServices.openUrl(
-            QUrl.fromLocalFile(str(config.write_template()))))
+        m.addAction("Settings…", lambda: self.show_window("settings"))
         m.addSeparator()
         m.addAction("Quit Hear Me Out", self.quit)
 
@@ -443,7 +457,9 @@ class Watcher(QObject):
         self.window.show()
         self.window.raise_()
         self.window.activateWindow()
-        if select:
+        if select == "settings":
+            self.window.open_settings()
+        elif select:
             self.window.select(select)
 
     def window_hidden(self) -> None:
@@ -509,7 +525,7 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
     app.setApplicationDisplayName("Hear Me Out")
     app.setDesktopFileName(notify.DESKTOP_ENTRY)
     from . import theme
-    theme.apply(app)
+    theme.apply(app, config.load().appearance)
     app.setWindowIcon(QIcon.fromTheme(notify.ICON))
     app.setQuitOnLastWindowClosed(False)  # closing the window keeps meeting detection running
 
