@@ -92,6 +92,8 @@ _ICONS = {
     "key": '<circle cx="8" cy="15" r="4"/><path d="M11 12l8.5-8.5M16 7l2.5 2.5M14 9l2 2"/>',
     "eye": '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/>'
            '<circle cx="12" cy="12" r="2.8"/>',
+    "home": '<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V19.5h4.5V15h3v4.5H18V9.5"/>',
+    "chevron": '<path d="M9.5 6l6 6-6 6"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4'
            'M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
@@ -213,6 +215,13 @@ QListWidget#Meetings::item:selected {{ background: {t['selected']}; }}
 
 QFrame[card="true"] {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 12px; }}
 QFrame[card="true"][dim="true"] {{ background: {t['raised']}; }}
+QFrame[card="true"][clickable="true"]:hover {{ border-color: {t['accent']}; background: {t['raised']}; }}
+QPushButton[variant="nav"] {{ background: transparent; border: none; border-radius: 8px; padding: 8px 10px;
+                              text-align: left; font-weight: 600; color: {t['muted']}; }}
+QPushButton[variant="nav"]:hover {{ background: {t['hover']}; color: {t['text']}; }}
+QPushButton[variant="nav"]:checked {{ background: {t['selected']}; color: {t['text']}; }}
+QLabel[role="stat"] {{ font-size: 26px; font-weight: 700; }}
+QLabel[role="greeting"] {{ font-size: 26px; font-weight: 700; }}
 QFrame[tone="info"] {{ background: {t['accent_soft']}; border-radius: 10px; }}
 QFrame[tone="ok"] {{ background: {t['green_soft']}; border-radius: 10px; }}
 QFrame[tone="warn"] {{ background: {t['amber_soft']}; border-radius: 10px; }}

@@ -15,8 +15,8 @@ import soundfile as sf
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QProgressBar, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
+    QApplication, QCheckBox, QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import library, obsidian, theme
@@ -25,8 +25,8 @@ from .player import Player
 from .settings import SettingsPage
 from .theme import T
 from .views import (
-    ElidedLabel, MeetingData, MeetingView, SaveBar, badge, button, callout, card, divider, from_meeting,
-    from_saved, icon_label, label,
+    ClickableCard, ElidedLabel, MeetingData, MeetingView, SaveBar, badge, button, callout, card, chip, divider,
+    friendly_due, from_meeting, from_saved, icon_label, label, text_block,
 )
 
 
@@ -39,6 +39,19 @@ def _day(d: date) -> str:
     if days < 7:
         return f"{d:%A}"
     return f"{d:%a %-d %B}" if d.year == date.today().year else f"{d:%-d %B %Y}"
+
+
+def _split_task(md: str) -> tuple[str, date | None]:
+    """'Finish the manifest 📅 2026-09-25' -> ('Finish the manifest', date(2026, 9, 25))."""
+    import re
+    m = re.search(r"\s*📅\s*(\d{4}-\d{2}-\d{2})", md)
+    if not m:
+        return md.strip(), None
+    try:
+        due = date.fromisoformat(m.group(1))
+    except ValueError:
+        due = None
+    return (md[:m.start()] + md[m.end():]).strip(), due
 
 
 def _clock(sec: float) -> str:
@@ -164,6 +177,8 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence.Find, self, lambda: self.search.setFocus())
         QShortcut(QKeySequence("Ctrl+R"), self, lambda: self.rec_btn.click())
         QShortcut(QKeySequence("Ctrl+,"), self, self.open_settings)
+        QShortcut(QKeySequence("Esc"), self, self.go_home)
+        QShortcut(QKeySequence("Alt+Home"), self, self.go_home)
         self.w.changed.connect(self.refresh)
         self.clock = QTimer(self)
         self.clock.timeout.connect(self._tick)
@@ -185,6 +200,10 @@ class MainWindow(QMainWindow):
         brand.addWidget(label("Hear Me Out", "brand"))
         brand.addStretch(1)
         s.addLayout(brand)
+        self.home_btn = button("Home", "home", "nav", tip="Home (Esc)", icon_color=T["muted"],
+                               on_click=self.go_home)
+        self.home_btn.setCheckable(True)
+        s.addWidget(self.home_btn)
         s.addSpacing(4)
         self.rec_btn = button("Record", "record", "record", on_click=self._record_clicked, tip="Ctrl+R")
         self.rec_btn.setMinimumHeight(38)
@@ -329,13 +348,24 @@ class MainWindow(QMainWindow):
                 self._show(self._settings_page())
             self._tick()
             return
-        target = self.current if self.current in keys else next((k for k in keys if k), None)
-        if target:
-            self._set_current(target, rebuild=force or target != self.current or self._stale(target))
+        target = self.current if self.current in keys else "home"
+        if target == "home":
+            self.current = "home"
+            self.list.blockSignals(True)
+            self.list.clearSelection()
+            self.list.setCurrentRow(-1)
+            self.list.blockSignals(False)
+            if force or getattr(self.detail.currentWidget(), "state_key", None) != self._home_key():
+                self._show(self._home_page())
         else:
-            self.current = None
-            self._show(self._welcome_page(bool(query)))
+            self._set_current(target, rebuild=force or target != self.current or self._stale(target))
         self._tick()
+
+    def go_home(self) -> None:
+        if self.current == "home" or not self._leave_settings():
+            return
+        self.current = "home"
+        self.refresh()
 
     def _state_key(self, key: str) -> str:
         obj = self.items.get(key)
@@ -350,6 +380,8 @@ class MainWindow(QMainWindow):
         return getattr(self.detail.currentWidget(), "state_key", None) != self._state_key(key)
 
     def select(self, key: str) -> None:
+        if key != self.current and not self._leave_settings():
+            return
         self.current = key
         self.refresh()
 
@@ -465,7 +497,7 @@ class MainWindow(QMainWindow):
             parts.append(f"{len(saved)} meeting{'s' if len(saved) != 1 else ''} saved in Obsidian")
         col.addWidget(label(" and ".join(parts), "muted"), 0, Qt.AlignHCenter)
         box = card()
-        box.setMaximumWidth(520)
+        box.setFixedWidth(480)
         bl = QVBoxLayout(box)
         bl.setContentsMargins(16, 12, 16, 12)
         bl.setSpacing(6)
@@ -583,6 +615,7 @@ class MainWindow(QMainWindow):
         if recording and hasattr(page, "update_recording"):
             page.update_recording()
         self.status.setText("Recording" if recording else self.w.status_text())
+        self.home_btn.setChecked(self.current == "home")
         colour = (T["red"] if recording else T["amber"] if self.w.jobs
                   else T["green"] if self.w.mode != "off" else T["faint"])
         self.status_dot.setPixmap(theme.pixmap("record", colour, 9))
@@ -599,6 +632,8 @@ class MainWindow(QMainWindow):
 
     def _page_for(self, key: str) -> QWidget:
         obj = self.items.get(key)
+        if key == "home":
+            return self._home_page()
         if key == "recording":
             return self._recording_page()
         if isinstance(obj, library.PendingRecording):
@@ -621,54 +656,202 @@ class MainWindow(QMainWindow):
         return missing
 
     def _welcome_page(self, searching: bool) -> QWidget:
-        page, lay = self._page()
-        lay.addStretch(1)
-        col = QVBoxLayout()
-        col.setSpacing(10)
-        if searching:
-            col.addWidget(icon_label("search", T["faint"], 40), 0, Qt.AlignHCenter)
-            col.addWidget(label("No meetings match your search", "h1"), 0, Qt.AlignHCenter)
-            col.addWidget(label("Search looks through titles, summaries, tasks and transcripts.", "muted"),
-                          0, Qt.AlignHCenter)
-        else:
-            col.addWidget(icon_label("wave", T["accent"], 44), 0, Qt.AlignHCenter)
-            col.addWidget(label("Your meetings will appear here", "h1"), 0, Qt.AlignHCenter)
-            sub = label("Join a call and Hear Me Out offers to record it. When it ends you get a summary, "
-                        "your to-dos and a transcript, and you choose what to save to Obsidian.", "muted", wrap=True)
-            sub.setAlignment(Qt.AlignCenter)
-            sub.setMaximumWidth(520)
-            col.addWidget(sub, 0, Qt.AlignHCenter)
-            col.addSpacing(8)
-            missing = self.setup_missing()
-            if missing:
-                c = callout("warn", "key", "Finish setting up", "Hear Me Out still needs " + ", ".join(missing) + ".",
-                            [button("Open settings", "settings", "primary", on_click=self.open_settings)])
-                c.setMaximumWidth(600)
-                col.addWidget(c, 0, Qt.AlignHCenter)
-            else:
-                col.addWidget(button("Record now", "record", "record", on_click=self._record_clicked),
-                              0, Qt.AlignHCenter)
-            col.addSpacing(18)
+        return self._home_page()
+
+    def _recent(self) -> list[object]:
+        """The latest meetings: recordings still to save and saved ones, newest first."""
+        pending = library.pending_recordings()
+        items = sorted([*pending, *getattr(self, "saved", [])], key=lambda o: o.started, reverse=True)
+        return items[:5]
+
+    def _open_todos(self, limit: int = 5) -> list[tuple[library.SavedMeeting, library.Task]]:
+        out = []
+        for m in getattr(self, "saved", [])[:20]:
+            for t in m.tasks("my_todos"):
+                if not t.done:
+                    out.append((m, t))
+        return out[:limit]
+
+    def _badge_for(self, o) -> tuple[str, str]:
+        if isinstance(o, library.PendingRecording):
+            if o.session in self.w.jobs:
+                return "Making notes", "busy"
+            if o.error:
+                return "Failed", "bad"
+            return ("Ready to save", "ready") if o.ready else ("Not processed", "plain")
+        n = o.open_todos()
+        return (f"{n} to-do{'s' if n != 1 else ''}", "ok") if n else ("Saved", "plain")
+
+    def _home_key(self) -> str:
+        parts = [f"{getattr(o, 'key', '')}:{self._badge_for(o)[0]}:{o.title}" for o in self._recent()]
+        parts += [f"{t.file}:{t.line}" for _, t in self._open_todos()]
+        return "home|" + "|".join(parts) + f"|{self.w.mode}|{','.join(self.setup_missing())}"
+
+    def _home_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("Page")
+        page.state_key = self._home_key()
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        outer.addWidget(scroll)
+        body = QWidget()
+        body.setObjectName("Page")
+        centre = QHBoxLayout(body)
+        centre.setContentsMargins(32, 28, 32, 28)
+        col_w = QWidget()
+        col_w.setMaximumWidth(880)
+        col = QVBoxLayout(col_w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(14)
+        centre.addStretch(1)
+        centre.addWidget(col_w, 8)
+        centre.addStretch(1)
+        scroll.setWidget(body)
+
+        # greeting
+        hour = time.localtime().tm_hour
+        part = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
+        first = (self.w.s.user_name or "").split()[0] if self.w.s.user_name else ""
+        head = QHBoxLayout()
+        texts = QVBoxLayout()
+        texts.setSpacing(2)
+        texts.addWidget(label(f"Good {part}{', ' + first if first else ''}", "greeting"))
+        texts.addWidget(label(f"{date.today():%A %-d %B}", "muted"))
+        head.addLayout(texts, 1)
+        if self.w.recorder is None:
+            head.addWidget(button("Record now", "record", "record", on_click=self._record_clicked), 0, Qt.AlignVCenter)
+        col.addLayout(head)
+
+        missing = self.setup_missing()
+        if missing:
+            col.addWidget(callout("warn", "key", "Finish setting up",
+                                  "Hear Me Out still needs " + ", ".join(missing) + ".",
+                                  [button("Open settings", "settings", "primary", on_click=self.open_settings)]))
+
+        # at-a-glance tiles
+        pending = library.pending_recordings()
+        todos_all = sum(m.open_todos() for m in getattr(self, "saved", []))
+        tiles = QHBoxLayout()
+        tiles.setSpacing(12)
+
+        def tile(number: str, text: str, icon: str, colour: str, on_click=None, tip: str = "") -> None:
+            c = ClickableCard() if on_click else card()
+            if on_click:
+                c.clicked.connect(on_click)
+            if tip:
+                c.setToolTip(tip)
+            lay = QHBoxLayout(c)
+            lay.setContentsMargins(16, 14, 16, 14)
+            lay.setSpacing(12)
+            lay.addWidget(icon_label(icon, colour, 22))
+            t = QVBoxLayout()
+            t.setSpacing(0)
+            t.addWidget(label(number, "stat"))
+            t.addWidget(label(text, "muted"))
+            lay.addLayout(t, 1)
+            tiles.addWidget(c, 1)
+
+        first_pending = pending[0].key if pending else None
+        tile(str(len(pending)), "recording to save" if len(pending) == 1 else "recordings to save", "mic",
+             T["accent"], (lambda: self.select(first_pending)) if first_pending else None)
+        todo_meeting = next((m.key for m, _ in self._open_todos(1)), None)
+        tile(str(todos_all), "open to-do" if todos_all == 1 else "open to-dos", "tasks", T["green"],
+             (lambda: self.select(todo_meeting)) if todo_meeting else None)
+        watching = self.w.mode != "off"
+        tile("On" if watching else "Off", "watching for meetings" if watching else "meeting detection",
+             "wave", T["green"] if watching else T["faint"], self.open_settings, "Change in Settings")
+        col.addLayout(tiles)
+
+        # recent meetings
+        recent = self._recent()
+        col.addSpacing(6)
+        col.addWidget(label("Recent meetings", "h2"))
+        if not recent:
+            empty = card(dim=True)
+            el = QVBoxLayout(empty)
+            el.setContentsMargins(24, 22, 24, 22)
+            el.setSpacing(8)
+            el.addWidget(label("Your meetings will appear here", "h2"))
+            el.addWidget(text_block("Join a call in Zoom, Teams, Meet, Slack or Discord and Hear Me Out offers to "
+                                    "record it. When it ends you get a summary, your to-dos and a transcript, and "
+                                    "you choose what to save to Obsidian.", width=780))
+            col.addWidget(empty)
             tips = QHBoxLayout()
             tips.setSpacing(12)
-            tips.addStretch(1)
             for icon, title, text in (
                     ("mic", "Notices meetings", "Zoom, Teams, Meet, Slack, Discord… it asks before recording."),
                     ("headphones", "Headset or speakers", "Follows the devices your call uses, even mid-call."),
                     ("gem", "You choose what's saved", "Summary, to-dos, team tasks and transcript, as notes.")):
                 c = card()
-                c.setFixedWidth(220)
                 cl = QVBoxLayout(c)
                 cl.setContentsMargins(16, 16, 16, 16)
                 cl.setSpacing(6)
                 cl.addWidget(icon_label(icon, T["accent"], 20))
                 cl.addWidget(label(title, "h2"))
-                cl.addWidget(label(text, "muted", wrap=True))
-                tips.addWidget(c)
-            tips.addStretch(1)
+                cl.addWidget(text_block(text, width=260))
+                cl.addStretch(1)
+                tips.addWidget(c, 1)
             col.addLayout(tips)
-        lay.addLayout(col)
-        lay.addStretch(2)
+        for o in recent:
+            c = ClickableCard()
+            c.clicked.connect(lambda key=o.key: self.select(key))
+            lay = QHBoxLayout(c)
+            lay.setContentsMargins(16, 12, 14, 12)
+            lay.setSpacing(12)
+            is_pending = isinstance(o, library.PendingRecording)
+            lay.addWidget(icon_label("mic" if is_pending else "gem", T["accent"] if is_pending else T["muted"], 18))
+            t = QVBoxLayout()
+            t.setSpacing(2)
+            title = ElidedLabel(o.title)
+            f = title.font()
+            f.setWeight(f.Weight.DemiBold)
+            title.setFont(f)
+            t.addWidget(title)
+            me = self.w.s.user_name
+            people = o.people if is_pending else [p for p in o.participants if p != me]
+            mins = max(1, round(o.duration_s / 60)) if is_pending else max(1, o.duration_min)
+            sub = " · ".join(x for x in (library.when(o.started), f"{mins} min",
+                                         ", ".join(people[:3]) if people else (o.app if is_pending else "")) if x)
+            t.addWidget(ElidedLabel(sub, "muted"))
+            lay.addLayout(t, 1)
+            text, kind = self._badge_for(o)
+            lay.addWidget(badge(text, kind))
+            lay.addWidget(icon_label("chevron", T["faint"], 16))
+            col.addWidget(c)
+
+        # open to-dos
+        todos = self._open_todos()
+        if todos:
+            col.addSpacing(6)
+            col.addWidget(label("Your open to-dos", "h2"))
+            for m, t in todos:
+                c = card()
+                lay = QHBoxLayout(c)
+                lay.setContentsMargins(14, 10, 14, 10)
+                lay.setSpacing(12)
+                box = QCheckBox()
+                box.setToolTip("Mark as done (updates the note in Obsidian)")
+                box.setCursor(Qt.PointingHandCursor)
+                box.toggled.connect(lambda done, task=t: (library.set_task_done(task, done),
+                                                          QTimer.singleShot(600, self.refresh)))
+                lay.addWidget(box)
+                text, due = _split_task(t.text)
+                tl = QVBoxLayout()
+                tl.setSpacing(2)
+                tl.addWidget(label(text, wrap=True))
+                tl.addWidget(ElidedLabel(f"From {m.title} · {library.when(m.started)}", "muted"))
+                lay.addLayout(tl, 1)
+                if due:
+                    txt, kind = friendly_due(due)
+                    lay.addWidget(chip(txt, "calendar", kind))
+                open_btn = button("", "chevron", "ghost", tip="Open the meeting", icon_color=T["faint"],
+                                  on_click=lambda _=False, key=m.key: self.select(key))
+                lay.addWidget(open_btn)
+                col.addWidget(c)
+        col.addStretch(1)
         return page
 
     def _recording_page(self) -> QWidget:
@@ -910,9 +1093,8 @@ class MainWindow(QMainWindow):
 
     def _settings_page(self) -> QWidget:
         page = SettingsPage(self.w)
-        page.saved.connect(lambda: QTimer.singleShot(0, lambda: self.refresh(force=True)
-                                                     if not page.dirty and page.status.text().startswith("✓")
-                                                     else self._show(self._settings_page())))
+        page.saved.connect(lambda: QTimer.singleShot(0, self.refresh))  # sidebar status, setup prompts…
+        page.discarded.connect(lambda: QTimer.singleShot(0, lambda: self._show(self._settings_page())))
         page.appearance_changed.connect(lambda _: QTimer.singleShot(0, self.retheme))
         return page
 

@@ -14,7 +14,7 @@ from typing import Callable
 from PySide6.QtCore import QSize, Qt, QThread, Signal
 from PySide6.QtGui import QFontMetrics, QIcon, QPainter
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+    QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy,
     QSlider, QStackedWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
@@ -86,6 +86,34 @@ def card(tone: str | None = None, dim: bool = False) -> QFrame:
         if dim:
             f.setProperty("dim", True)
     return f
+
+
+class ClickableCard(QFrame):
+    """A card you can click, e.g. a recent meeting on the Home screen."""
+    clicked = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.setProperty("card", True)
+        self.setProperty("clickable", True)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self.rect().contains(event.position().toPoint()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+
+def text_block(text: str, role: str = "muted", width: int = 560, center: bool = False) -> QLabel:
+    """Wrapped text that always gets the room it needs (a centred, wrapped QLabel otherwise
+    collapses to a strip on some screens and fonts)."""
+    w = label(text, role, wrap=True)
+    w.setMinimumWidth(min(width, 360))
+    w.setMaximumWidth(width)
+    w.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+    if center:
+        w.setAlignment(Qt.AlignHCenter | Qt.AlignTop)
+    return w
 
 
 def divider() -> QFrame:
@@ -646,52 +674,8 @@ class _Saver(QThread):
             self.failed.emit(str(e))
 
 
-class _WhereDialog(QDialog):
-    """Change which vault and folder a meeting is saved to."""
-
-    def __init__(self, parent, vaults: list[Path], vault: Path | None, folder: str):
-        super().__init__(parent)
-        self.setWindowTitle("Where to save")
-        self.setMinimumWidth(460)
-        self.combo = QComboBox()
-        for v in vaults:
-            self.combo.addItem(theme.icon("gem", T["accent"]), v.name, str(v))
-        if vault and self.combo.findData(str(vault)) < 0:
-            self.combo.addItem(theme.icon("gem", T["accent"]), vault.name, str(vault))
-        if vault:
-            self.combo.setCurrentIndex(self.combo.findData(str(vault)))
-        browse = button("Browse…", "folder", on_click=self._browse)
-        row = QHBoxLayout()
-        row.addWidget(self.combo, 1)
-        row.addWidget(browse)
-        self.folder = QLineEdit(folder)
-        form = QFormLayout()
-        form.setSpacing(10)
-        form.addRow("Obsidian vault", row)
-        form.addRow("Folder in the vault", self.folder)
-        ok = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        ok.accepted.connect(self.accept)
-        ok.rejected.connect(self.reject)
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 16)
-        lay.addLayout(form)
-        lay.addSpacing(8)
-        lay.addWidget(ok)
-
-    def _browse(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Choose your Obsidian vault", str(Path.home()))
-        if path:
-            if self.combo.findData(path) < 0:
-                self.combo.addItem(Path(path).name, path)
-            self.combo.setCurrentIndex(self.combo.findData(path))
-
-    def result_values(self) -> tuple[Path | None, str]:
-        d = self.combo.currentData()
-        return (Path(d) if d else None), self.folder.text().strip() or "Meetings"
-
-
 class SaveBar(QFrame):
-    """Choose what goes into Obsidian, see where, and save with a progress bar."""
+    """Choose what goes into Obsidian and where, and save with a progress bar."""
 
     saved = Signal(list)  # paths written
 
@@ -705,19 +689,38 @@ class SaveBar(QFrame):
         self._error: str | None = None
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(16, 14, 16, 14)
+        lay.setContentsMargins(16, 14, 16, 12)
         lay.setSpacing(10)
+
+        # where: vault + folder, always visible
         top = QHBoxLayout()
+        top.setSpacing(8)
         top.addWidget(icon_label("gem", T["accent"], 18))
         top.addWidget(label("Save to Obsidian", "h2"))
-        top.addSpacing(8)
-        self.dest = ElidedLabel("", "muted")
-        top.addWidget(self.dest, 1)
-        self.change = button("Change", variant="link", on_click=self._change_where,
-                             tip="Choose a different vault or folder")
-        top.addWidget(self.change)
+        top.addStretch(1)
+        top.addWidget(label("Vault", "muted"))
+        self.vault_box = QComboBox()
+        self.vault_box.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.vault_box.setMinimumWidth(170)
+        for v in vaults:
+            self._add_vault(v)
+        if vault and self.vault_box.findData(str(vault)) < 0:
+            self._add_vault(vault)
+        self.vault_box.addItem(theme.icon("folder", T["muted"]), "Choose another folder…", "__browse__")
+        if vault:
+            self.vault_box.setCurrentIndex(self.vault_box.findData(str(vault)))
+        self.vault_box.activated.connect(self._vault_chosen)
+        top.addWidget(self.vault_box)
+        top.addSpacing(6)
+        top.addWidget(label("Folder", "muted"))
+        self.folder_edit = QLineEdit(folder)
+        self.folder_edit.setFixedWidth(150)
+        self.folder_edit.setToolTip("Folder inside the vault, e.g. Meetings or Work/Meetings")
+        self.folder_edit.textChanged.connect(self._folder_changed)
+        top.addWidget(self.folder_edit)
         lay.addLayout(top)
 
+        # what: one chip per item, then Save
         row = QHBoxLayout()
         row.setSpacing(6)
         self.chips: dict[str, QPushButton] = {}
@@ -744,8 +747,39 @@ class SaveBar(QFrame):
         self.save_btn.setDefault(True)
         row.addWidget(self.save_btn)
         lay.addLayout(row)
+        self.row = row
+
+        self.dest = ElidedLabel("", "faint")
+        lay.addWidget(self.dest)
+        self.change = self.vault_box  # disabled together with the chips while saving
         if title_edit is not None:
             title_edit.textChanged.connect(self._refresh)
+        self._refresh()
+
+    def _add_vault(self, v: Path) -> None:
+        self.vault_box.insertItem(max(0, self.vault_box.count() - (1 if self.vault_box.findData("__browse__") >= 0
+                                                                    else 0)),
+                                  theme.icon("gem", T["accent"]), v.name, str(v))
+        idx = self.vault_box.findData(str(v))
+        self.vault_box.setItemData(idx, str(v), Qt.ToolTipRole)
+
+    def _vault_chosen(self, index: int) -> None:
+        data = self.vault_box.itemData(index)
+        if data == "__browse__":
+            path = QFileDialog.getExistingDirectory(self, "Choose your Obsidian vault", str(Path.home()))
+            if path:
+                if self.vault_box.findData(path) < 0:
+                    self._add_vault(Path(path))
+                self.vault_box.setCurrentIndex(self.vault_box.findData(path))
+                self.vault = Path(path)
+            elif self.vault:
+                self.vault_box.setCurrentIndex(self.vault_box.findData(str(self.vault)))
+        elif data:
+            self.vault = Path(data)
+        self._refresh()
+
+    def _folder_changed(self, text: str) -> None:
+        self.folder = text.strip().strip("/") or "Meetings"
         self._refresh()
 
     def keys(self) -> list[str]:
@@ -778,21 +812,15 @@ class SaveBar(QFrame):
         self.save_btn.setText(f"Save {n} item{'s' if n != 1 else ''}" if n else "Choose what to save")
         if self.vault:
             where = obsidian.meeting_folder(self.vault, self.folder, self.meeting)
-            self.dest.setText(f"to  {self.vault.name} › {where.relative_to(self.vault)}")
+            self.dest.setText(f"Saves to  {self.vault.name} › {where.relative_to(self.vault)}/")
         else:
-            self.dest.setText("Choose a vault to save to")
-
-    def _change_where(self) -> None:
-        d = _WhereDialog(self, self.vaults, self.vault, self.folder)
-        if d.exec():
-            self.vault, self.folder = d.result_values()
-            self._refresh()
+            self.dest.setText("Choose the Obsidian vault to save to")
 
     def _save(self) -> None:
         keys = self.keys()
         self._sync_title()
         self.remember(keys)
-        for w in (*self.chips.values(), self.change, self.save_btn):
+        for w in (*self.chips.values(), self.vault_box, self.folder_edit, self.save_btn):
             w.setEnabled(False)
         if self.title_edit is not None:
             self.title_edit.setReadOnly(True)
@@ -829,5 +857,5 @@ class SaveBar(QFrame):
         self.status.setPixmap(theme.pixmap("check", T["green"], 16))
         done = label(f"Saved {len(saver.paths)} item{'s' if len(saver.paths) != 1 else ''} to Obsidian")
         done.setStyleSheet(f"color: {T['green']}; font-weight: 650;")
-        self.layout().itemAt(1).layout().addWidget(done)
+        self.row.addWidget(done)
         self.saved.emit(saver.paths)

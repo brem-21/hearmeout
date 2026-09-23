@@ -112,10 +112,12 @@ def load() -> Settings:
                 setattr(s, attr, data[section][key])
 
     env = {**_read_dotenv(Path.cwd() / ".env"), **os.environ}
+    from_env: dict[str, object] = {}
     for var, (attr, conv) in _ENV.items():
         if env.get(var):
             setattr(s, attr, conv(env[var]))
-
+            from_env[attr] = getattr(s, attr)
+    s._from_env = from_env  # remembered so save() doesn't copy them into the file
     return s
 
 
@@ -171,6 +173,11 @@ def _toml_value(v) -> str:
     return json.dumps("" if v is None else str(v), ensure_ascii=False)  # JSON strings are valid TOML strings
 
 
+def _unchanged_env(s: Settings, attr: str) -> bool:
+    env = getattr(s, "_from_env", {})
+    return attr in env and getattr(s, attr) == env[attr]
+
+
 def save(s: Settings) -> Path:
     """Write settings to config.toml, keeping the file's layout and comments where possible."""
     import re
@@ -189,12 +196,15 @@ def save(s: Settings) -> Path:
         key = (section, m.group(1))
         if key in done:
             continue
+        if _unchanged_env(s, _TOML[key]):
+            done.add(key)  # came from an environment variable: leave the file's own value alone
+            continue
         comment = re.search(r"\s+#[^\"\]]*$", m.group(2))
         lines[i] = f"{m.group(1)} = {_toml_value(getattr(s, _TOML[key]))}" + (comment.group(0) if comment else "")
         done.add(key)
     missing: dict[str, list[str]] = {}
     for (sec, key), attr in _TOML.items():
-        if (sec, key) not in done:
+        if (sec, key) not in done and not _unchanged_env(s, attr):
             missing.setdefault(sec, []).append(f"{key} = {_toml_value(getattr(s, attr))}")
     for sec, entries in missing.items():
         idx = next((i for i, l in enumerate(lines) if l.strip() == f"[{sec}]"), None)

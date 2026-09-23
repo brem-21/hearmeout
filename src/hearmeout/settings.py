@@ -91,7 +91,8 @@ def _secret(value: str, placeholder: str) -> QLineEdit:
 
 
 class SettingsPage(QWidget):
-    saved = Signal()               # settings were saved (or changes discarded)
+    saved = Signal()               # settings were saved
+    discarded = Signal()           # unsaved changes were thrown away
     appearance_changed = Signal(str)
 
     def __init__(self, watcher):
@@ -370,4 +371,4 @@ class SettingsPage(QWidget):
     def discard_changes(self) -> None:
         """Put every field back to what's saved (the window rebuilds this page)."""
         self.dirty = False
-        self.saved.emit()
+        self.discarded.emit()
