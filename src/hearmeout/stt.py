@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -14,6 +15,9 @@ API_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
 # Start a new line when a speaker pauses this long (seconds).
 PAUSE = 1.2
+# On laptop speakers (no headset) the mic also hears the other side. A mic word matching
+# a word the other side said within this many seconds is treated as that echo.
+ECHO_WINDOW = 0.7
 
 
 @dataclass
@@ -44,14 +48,34 @@ def transcribe(audio: Path, api_key: str, model: str, *, language: str | None = 
 
     utterances: list[Utterance] = []
     if two_track:
-        for channel in body.get("transcripts") or [body]:
-            speaker = me if channel.get("channel_index", 0) == 0 else "Them"
-            utterances += _group(channel.get("words", []), lambda w: speaker)
+        channels = {c.get("channel_index", 0): c.get("words", []) for c in body.get("transcripts") or [body]}
+        mic, system = channels.get(0, []), channels.get(1, [])
+        utterances += _group(remove_echo(mic, system), lambda w: me)
+        utterances += _group(system, lambda w: "Them")
     else:
         utterances = _group(body.get("words", []),
                             lambda w: "Speaker " + str(int(str(w.get("speaker_id") or "0").rsplit("_", 1)[-1]) + 1))
     utterances.sort(key=lambda u: u.start)
     return utterances
+
+
+def _norm(word: str) -> str:
+    return re.sub(r"[^\w]", "", word.lower())
+
+
+def remove_echo(mic: list[dict], system: list[dict]) -> list[dict]:
+    """Drop mic words that are the other side's voice coming out of the speakers."""
+    heard: dict[str, list[float]] = {}
+    for w in system:
+        if w.get("type") == "word" and w.get("start") is not None:
+            heard.setdefault(_norm(w["text"]), []).append(w["start"])
+    kept = []
+    for w in mic:
+        if w.get("type") == "word" and w.get("start") is not None:
+            if any(abs(w["start"] - t) <= ECHO_WINDOW for t in heard.get(_norm(w["text"]), ())):
+                continue
+        kept.append(w)
+    return kept
 
 
 def _group(words: list[dict], speaker_of) -> list[Utterance]:
