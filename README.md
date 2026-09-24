@@ -18,6 +18,10 @@ into your local Obsidian vault as plain Markdown.
 - **You vs. everyone else.** Your microphone and the computer's audio are
   recorded as separate tracks, so the transcript knows what *you* said and
   "My to-dos" only lists tasks that are yours.
+- **Knows who you're talking to.** When the call window names the other person
+  (a Slack DM or huddle, "Call with …" in Teams, a Discord DM), the notification
+  says who it's with, the transcript shows their name instead of "Them", and an
+  unsaved one-on-one is listed as "Call with Richard".
 - **Headset or speakers.** Recording follows the mic and speaker your call app
   actually uses (USB or Bluetooth headset), even if you switch mid-call. On laptop
   speakers, the other side's voice picked up by your mic is filtered out.
@@ -25,7 +29,8 @@ into your local Obsidian vault as plain Markdown.
   any of: summary, my to-dos, team tasks, transcript, audio. Untick individual
   tasks, fix the title, pick the vault, then save.
 - **Local files.** Each item becomes its own note in
-  `<vault>/Meetings/<date> <title>/`. Obsidian doesn't need to be open. Tasks use
+  `<vault>/Meetings/<date> <title>/` (pick another folder in the vault, like
+  `Work/Meetings`, when saving or in Settings). Obsidian doesn't need to be open. Tasks use
   the [Tasks plugin](https://publish.obsidian.md/tasks/) format (`- [ ] … 📅 2026-09-25`),
   and every task carries the quote it came from.
 - **Your keys, your machine.** No account and no server. Recordings are deleted
@@ -68,7 +73,7 @@ api_key = "sk-or-v1-…"    # OpenRouter key
 Your Obsidian vault is found automatically from Obsidian's own settings (deb,
 AppImage, Flatpak or Snap installs). Otherwise, set `vault` under `[obsidian]`.
 Keys can also be given as environment variables (`ELEVENLABS_API_KEY`,
-`OPENROUTER_API_KEY`) instead.
+`OPENROUTER_API_KEY`) instead; saving Settings won't copy them into the file.
 
 **3. Check everything works**
 
@@ -110,8 +115,14 @@ delete those too to remove everything.
 
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
+The app opens on **Home**: a greeting, **Record now**, a reminder if your name or
+keys are still missing, your recent meetings and all your open to-dos (tick them off
+right there). Esc or Alt+Home comes back to it.
+
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
-your saved meetings by day; Settings is at the bottom. A **Light | Dark** switch in
+your saved meetings by day; Settings (Ctrl+,) is at the bottom, with buttons to jump
+to each section (Appearance, You, Keys, Obsidian, Meetings). Leaving Settings with
+unsaved changes asks whether to save or discard them. A **Light | Dark** switch in
 the sidebar sets the theme whatever your system uses (Settings › Appearance also has
 “Match system”). While recording, a banner shows the time, live **You / Others** levels
 (handy for checking your headset mic is heard) and a countdown if nobody is talking.
@@ -124,6 +135,11 @@ meetings; opening it again (from the app menu or the tray) brings the window bac
 | **To save**: *Failed* | see why (no internet, bad API key…), **Try again**, play or delete the recording |
 | **Saved in Obsidian** | the same view: tick off to-dos (the note in Obsidian updates), click a transcript time to hear it, **Open in Obsidian** |
 
+Right-click a meeting for **Open in Obsidian**, **Show folder** or **Make notes**.
+Select several (or **Select everything**) and press Delete to **Move to Trash**:
+recordings and their notes in the vault go to your system's Trash, so they can be
+restored.
+
 When a meeting starts you'll get a notification: **Record**, **Not now** or
 **Never for this app**. While it's recording the tray icon is a red dot. When
 the call ends (or you press **Stop recording**), notes are made and the app
@@ -134,8 +150,8 @@ opens on them, ready to save.
 | Zoom, Microsoft Teams, Slack huddles, Discord, Webex, Skype, Telegram, Signal, Element, WhatsApp… | the app uses your microphone |
 | Google Meet, Teams, Zoom, Jitsi, Whereby… in a browser | the browser uses your microphone; the tab title names the meeting when it's visible (X11) |
 
-Other apps using the mic (voice recorders, OBS) are ignored. The Settings menu
-(also in the tray) has detection on/off, **Record without asking**, the apps you
+Other apps using the mic (voice recorders, OBS) are ignored. Settings › Meetings
+(and the tray menu) has detection on/off, **Record without asking**, the apps you
 chose never to be asked about, and **Start at login**. On GNOME the tray icon needs the AppIndicator extension
 (on by default on Ubuntu).
 
@@ -150,6 +166,11 @@ hearmeout record -y --save summary,my_todos   # save without asking
 
 If you close the review window without saving, the recording is kept. The command
 shows how to come back to it later.
+
+### If something goes wrong
+
+The app usually runs without a terminal, so unexpected errors are written to
+`~/.local/share/hearmeout/app.log`. Include it when reporting a problem.
 
 ## Models
 
