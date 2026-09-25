@@ -28,7 +28,7 @@ into your local Obsidian vault as plain Markdown.
 - **Knows your calendar.** Connect your Outlook calendar (Settings › Integrations) and a
   recording is named after the Outlook or Teams meeting it belongs to. Invitees'
   names help the transcript and the to-do owners, the invite's agenda helps the
-  summary, and Home shows what's coming up with a **Join** button.
+  summary, and Home shows your week's meetings: click one to join.
 - **You choose what's saved.** After each meeting, a review window lets you pick
   any of: summary, my to-dos, team tasks, transcript, audio. Untick individual
   tasks, fix the title, pick the vault, then save.
@@ -139,8 +139,9 @@ next few days of events in `~/.local/share/hearmeout/calendar.json`.
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The app opens on **Home**: a greeting, **Record now**, a reminder if your name or
-keys are still missing, your calendar's meetings coming up (with **Join** for Teams
-calls), your recent meetings and all your open to-dos (tick them off right there). Esc or Alt+Home comes back to it.
+keys are still missing, **This week** from your calendar (Monday to Sunday, today
+highlighted: hover a meeting for who's invited, click it to join the Teams call),
+your recent meetings and all your open to-dos (tick them off right there). Esc or Alt+Home comes back to it.
 
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
 your saved meetings by day; Settings (Ctrl+,) is at the bottom, with buttons to jump

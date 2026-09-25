@@ -781,7 +781,7 @@ class MainWindow(QMainWindow):
         t = label(when)
         t.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {colour}; border: none; background: transparent;")
         lay.addWidget(t)
-        text = e.subject if len(e.subject) <= 40 else e.subject[:38].rstrip() + "…"
+        text = e.subject if len(e.subject) <= 30 else e.subject[:28].rstrip() + "…"  # full title on hover
         title = label(text, wrap=True)
         title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
         title.setStyleSheet(f"font-size: 12px; color: {T['faint'] if over else T['text']}; "
