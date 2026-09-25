@@ -13,11 +13,11 @@ import shlex
 import shutil
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QFile, QLockFile, QObject, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QFile, QLockFile, QObject, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -31,6 +31,7 @@ SILENCE_WARNING = 30  # warn this many seconds before a silence stop
 POLL_MS = 2000
 CONFIRM_POLLS = 2  # a call must be seen twice in a row (about 2-4 s) before we ask
 CALENDAR_MS = 10 * 60 * 1000  # how often to re-read the calendar
+REMIND_MS = 20 * 1000         # how often to check for meetings about to start
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -214,7 +215,49 @@ class Watcher(QObject):
         self.cal_timer.timeout.connect(self.refresh_calendar)
         self.cal_timer.start(CALENDAR_MS)
         QTimer.singleShot(1500, self.refresh_calendar)
+        self.reminded: set[str] = set(state.get("reminded", []))  # meetings already reminded about
+        self.remind_ids: dict[int, outlook.Event] = {}              # reminder notification -> meeting
+        self.remind_timer = QTimer(self)
+        self.remind_timer.timeout.connect(self.check_reminders)
+        self.remind_timer.start(REMIND_MS)
         self._update_tray()
+
+    def check_reminders(self) -> None:
+        """Notify a few minutes before each meeting in your calendar, with a Join button."""
+        minutes = self.s.remind_before
+        if minutes <= 0 or not outlook.connected():
+            return
+        try:
+            soon = outlook.starting_soon(minutes)
+        except Exception:
+            return
+        new = False
+        for e in soon:
+            key = f"{e.id}@{e.start.isoformat()}"
+            if key in self.reminded:
+                continue
+            self.reminded.add(key)
+            new = True
+            mins = max(1, round((e.start - datetime.now()).total_seconds() / 60))
+            others = e.others([self.s.user_name, *self.s.user_aliases])
+            body = f"{e.start:%H:%M}–{e.end:%H:%M}"
+            if others:
+                body += " · with " + ", ".join(others[:4]) + (f" +{len(others) - 4}" if len(others) > 4 else "")
+            if self.mode != "off":
+                body += "\nHear Me Out will offer to record when the call starts."
+            actions = [("join", "Join")] if e.join_url else []
+            nid = self.notifier.show(f"In {mins} minute{'s' if mins != 1 else ''}: {e.subject}", body,
+                                     actions + [("dismiss", "Dismiss")], sticky=True)
+            if nid:
+                self.remind_ids[nid] = e
+            else:  # no notification service: the tray can still say it
+                self.tray.showMessage(f"In {mins} min: {e.subject}", body, icon("idle"), 15000)
+        if new:
+            now = datetime.now()
+            # keep the list short: forget meetings that started more than a day ago
+            self.reminded = {k for k in self.reminded
+                             if datetime.fromisoformat(k.rsplit("@", 1)[1]) > now - timedelta(days=1)}
+            _save_state(reminded=sorted(self.reminded))
 
     def refresh_calendar(self) -> None:
         if not outlook.connected() or (self._cal_job and self._cal_job.isRunning()):
@@ -328,6 +371,12 @@ class Watcher(QObject):
                 self.keep_recording()
             elif key == "stop":
                 self.stop()
+        elif nid in self.remind_ids:
+            e = self.remind_ids.pop(nid)
+            if key in ("join", "default") and e.join_url:
+                QDesktopServices.openUrl(QUrl(e.join_url))
+            elif key == "default":
+                self.show_window()
         elif nid in self.ready_ids and key in ("open", "default"):
             self.show_window(f"pending:{self.ready_ids[nid]}")
 
@@ -547,6 +596,8 @@ class Watcher(QObject):
         cancel_sign_in()
         if self._cal_job is not None:
             self._cal_job.wait(5000)
+        if self.window is not None:
+            self.window.weeks.wait()
         if self.window is not None:
             self.window.player.stop()
             for bar in self.window.bars.values():  # let a save to Obsidian finish

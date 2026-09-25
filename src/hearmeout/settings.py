@@ -333,6 +333,15 @@ class SettingsPage(QWidget):
         buttons.addStretch(1)
         ms.addLayout(buttons)
         f.addRow(ms)
+        self.remind = QComboBox()
+        for minutes in (0, 1, 2, 5, 10, 15):
+            self.remind.addItem("Never" if minutes == 0 else
+                                f"{minutes} minute{'s' if minutes > 1 else ''} before a meeting", minutes)
+        if self.remind.findData(self.s.remind_before) < 0:
+            self.remind.addItem(f"{self.s.remind_before} minutes before a meeting", self.s.remind_before)
+        self.remind.setCurrentIndex(self.remind.findData(self.s.remind_before))
+        self.remind.setToolTip("A notification with a Join button, for meetings in your connected calendar")
+        f.addRow("Remind me", self.remind)
         col.addWidget(c)
         self._sections["Integrations"] = c
         if _active is not None and _active.isRunning():
@@ -375,7 +384,7 @@ class SettingsPage(QWidget):
 
         for w in (self.name, self.aliases, self.eleven, self.router, self.folder, self.ms_client):
             w.textChanged.connect(self._changed)
-        for w in (self.model, self.vault, self.silence):
+        for w in (self.model, self.vault, self.silence, self.remind):
             w.currentIndexChanged.connect(self._changed)
         self.model.editTextChanged.connect(self._changed)
         for w in (*self.items.values(), self.login, *self.unignore.values()):
@@ -546,6 +555,7 @@ class SettingsPage(QWidget):
         s.detect = mode
         s.appearance = theme.MODE
         s.ms_client_id = self.ms_client.text().strip() or s.ms_client_id
+        s.remind_before = int(self.remind.currentData())
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:
