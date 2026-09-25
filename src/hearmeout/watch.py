@@ -446,6 +446,10 @@ class Watcher(QObject):
                 self.stop()
         elif nid in self.making_ids and key == "stopnotes":
             self.stop_notes(self.making_ids[nid])
+        elif self.window is not None and nid in self.window.mail_reader.notes:
+            self.window.mail_reader.notes.pop(nid)
+            if key in ("openmail", "default"):
+                self.show_window("mail")
         elif nid in self.remind_ids:
             e = self.remind_ids.pop(nid)
             if key in ("join", "default") and e.join_url:
@@ -642,6 +646,15 @@ class Watcher(QObject):
 
     # ------------------------------------------------------------------ window + tray
 
+    def prepare_window(self) -> None:
+        """Build the window without showing it (starting in the tray), so the Outlook pane can
+        load and new-mail notifications work before you first open Hear Me Out."""
+        from .app import MainWindow
+        if self.window is None:
+            self.window = MainWindow(self)
+            if self.s.mail_on_home and self.s.mail_source == "outlook" and self.s.mail_notify:
+                self.window.outlook_view()
+
     def show_window(self, select: str | None = None) -> None:
         from .app import MainWindow
         if self.window is None:
@@ -710,6 +723,8 @@ class Watcher(QObject):
             self._cal_job.wait(5000)
         if self.window is not None:
             self.window.weeks.wait()
+            if self.window.mail_tab.job is not None:
+                self.window.mail_tab.job.wait(5000)
         if self.window is not None:
             self.window.player.stop()
             for bar in self.window.bars.values():  # let a save to Obsidian finish
@@ -774,6 +789,8 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
         return 0
 
     watcher = Watcher()
+    if not show_window:
+        QTimer.singleShot(3000, watcher.prepare_window)  # for new-mail notifications while in the tray
     theme.follow_system(app, lambda: watcher.window.retheme() if watcher.window is not None else None)
     QLocalServer.removeServer(SOCKET_NAME)
     server = QLocalServer()

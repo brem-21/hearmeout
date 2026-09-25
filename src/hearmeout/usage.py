@@ -34,6 +34,7 @@ class Totals:
     recordings: int = 0        # transcriptions
     audio_s: float = 0.0
     notes: int = 0             # sets of notes written
+    mail: int = 0              # mail summaries and explanations
     tokens_in: int = 0
     tokens_out: int = 0
     cost: float = 0.0          # USD, as reported by OpenRouter
@@ -59,8 +60,11 @@ def totals(since: datetime | None = None) -> Totals:
         if row.get("service") == "elevenlabs":
             t.recordings += 1
             t.audio_s += float(row.get("audio_s") or 0)
-        elif row.get("service") == "llm":
-            t.notes += 1
+        elif row.get("service") in ("llm", "mail"):
+            if row.get("service") == "mail":
+                t.mail += 1
+            else:
+                t.notes += 1
             t.tokens_in += int(row.get("tokens_in") or 0)
             t.tokens_out += int(row.get("tokens_out") or 0)
             t.cost += float(row.get("cost") or 0)

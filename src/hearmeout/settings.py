@@ -368,6 +368,9 @@ class SettingsPage(QWidget):
         row.addWidget(self.mail_count)
         row.addStretch(1)
         mail_box.addLayout(row)
+        self.mail_notify = QCheckBox("Notify me when new email arrives")
+        self.mail_notify.setChecked(self.s.mail_notify)
+        mail_box.addWidget(self.mail_notify)
         self.mail_status = label("", "muted", wrap=True)
         mail_box.addWidget(self.mail_status)
         actions = QHBoxLayout()
@@ -425,7 +428,7 @@ class SettingsPage(QWidget):
         for w in (self.model, self.vault, self.silence, self.remind, self.mail_count, self.mail_source):
             w.currentIndexChanged.connect(self._changed)
         self.model.editTextChanged.connect(self._changed)
-        for w in (*self.items.values(), self.login, *self.unignore.values(), self.mail_show):
+        for w in (*self.items.values(), self.login, *self.unignore.values(), self.mail_show, self.mail_notify):
             w.toggled.connect(self._changed)
         self.mode.buttonToggled.connect(self._changed)
         self._checker: _KeyCheck | None = None
@@ -503,6 +506,7 @@ class SettingsPage(QWidget):
         from . import outlookweb
         outlook = self.mail_source.currentData() == "outlook"
         self.mail_count.setVisible(not outlook)
+        self.mail_notify.setVisible(outlook)
         self.mail_signout.setVisible(outlook and outlookweb.available())
         self.mail_goa.setVisible(not outlook)
         if outlook:
@@ -623,6 +627,7 @@ class SettingsPage(QWidget):
         s.mail_on_home = self.mail_show.isChecked()
         s.mail_count = int(self.mail_count.currentData())
         s.mail_source = self.mail_source.currentData()
+        s.mail_notify = self.mail_notify.isChecked()
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:

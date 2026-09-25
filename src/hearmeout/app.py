@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from . import agenda, library, obsidian, outlook, theme, usageview
+from . import agenda, library, mailtab, obsidian, outlook, theme, usageview
 from .gui import _load_choices, _save_choices
 from .player import Player
 from .settings import SettingsPage
@@ -176,6 +176,9 @@ class MainWindow(QMainWindow):
         self.weeks = agenda.Weeks()  # which week Home's calendar shows
         self.weeks.changed.connect(lambda: self.refresh())
         self.todo_view = {"by": "date", "done": False, "team": True}
+        self.mail_tab = mailtab.MailTab()
+        self.mail_reader = mailtab.MailReader(self)  # new-mail notifications, and the Mail tab's inbox
+        self.mail_reader.changed.connect(lambda: self.show_mail() if self.current == "mail" else None)
         self.setWindowTitle("Hear Me Out")
         self.resize(1180, 760)
         self.setMinimumSize(860, 560)
@@ -215,6 +218,10 @@ class MainWindow(QMainWindow):
                                 icon_color=T["muted"], on_click=lambda: self.select("todos"))
         self.todos_btn.setCheckable(True)
         s.addWidget(self.todos_btn)
+        self.mail_btn = button("Mail", "mail", "nav", tip="Summaries of your inbox, and help with any email",
+                               icon_color=T["muted"], on_click=lambda: self.select("mail"))
+        self.mail_btn.setCheckable(True)
+        s.addWidget(self.mail_btn)
         s.addSpacing(4)
         self.rec_btn = button("Record", "record", "record", on_click=self._record_clicked, tip="Ctrl+R")
         self.rec_btn.setMinimumHeight(38)
@@ -390,6 +397,14 @@ class MainWindow(QMainWindow):
                 self._show(self._settings_page())
             self._tick()
             return
+        if self.current == "mail":
+            self.list.blockSignals(True)
+            self.list.clearSelection()
+            self.list.setCurrentRow(-1)
+            self.list.blockSignals(False)
+            self.show_mail(force)
+            self._tick()
+            return
         if self.current == "todos":
             self.list.blockSignals(True)
             self.list.clearSelection()
@@ -430,6 +445,13 @@ class MainWindow(QMainWindow):
                 btn.update_text()
         except RuntimeError:  # that Home page was replaced
             pass
+
+    def show_mail(self, force: bool = False) -> None:
+        """The Mail tab (rebuilt when the inbox, a summary or an explanation changes)."""
+        if self.current != "mail":
+            return
+        if force or getattr(self.detail.currentWidget(), "state_key", None) != self.mail_tab.key(self):
+            self._show(mailtab.page(self))
 
     def show_todos(self, force: bool = False) -> None:
         """The To-dos page (rebuilt when a to-do or the view changes)."""
@@ -697,6 +719,9 @@ class MainWindow(QMainWindow):
         self.status.setText("Recording" if recording else self.w.status_text())
         self.home_btn.setChecked(self.current == "home")
         self.todos_btn.setChecked(self.current == "todos")
+        self.mail_btn.setChecked(self.current == "mail")
+        unread = sum(m.unread for m in self.mail_reader.mails)
+        self.mail_btn.setText(f"Mail  ·  {unread}" if unread else "Mail")
         n = sum(m.open_todos(team=self.todo_view["team"]) for m in getattr(self, "saved", []))
         self.todos_btn.setText(f"To-dos  ·  {n}" if n else "To-dos")
         colour = (T["red"] if recording else T["amber"] if self.w.jobs

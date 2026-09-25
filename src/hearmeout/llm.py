@@ -88,12 +88,21 @@ def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: s
                   "Use these names for 'Them' unless the transcript clearly says otherwise." if others else ""))},
         {"role": "user", "content": _invite(event) + f"Transcript:\n\n{transcript}"},
     ]
-    schema = _strict(MeetingNotes.model_json_schema())
+    notes = ask(MeetingNotes, messages, name="meeting_notes", api_key=api_key, base_url=base_url, model=model,
+                cancel=cancel)
+    return _fix_owners(notes, [me, *(names or [])])
+
+
+def ask(model_cls: type[BaseModel], messages: list[dict], *, name: str, api_key: str, base_url: str, model: str,
+        cancel=None, kind: str = "llm"):
+    """Ask the model for JSON matching `model_cls` (structured output), retrying once if it doesn't.
+    Tokens and cost are logged for the usage panel under `kind`."""
+    messages = list(messages)
     payload = {
         "model": model,
         "messages": messages,
         "response_format": {"type": "json_schema",
-                            "json_schema": {"name": "meeting_notes", "strict": True, "schema": schema}},
+                            "json_schema": {"name": name, "strict": True, "schema": _strict(model_cls.model_json_schema())}},
         "provider": {"require_parameters": True},  # OpenRouter: only route to providers that honour the schema
         "usage": {"include": True},  # OpenRouter: report tokens and cost, for the usage panel
     }
@@ -107,15 +116,14 @@ def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: s
                 raise RuntimeError(f"Model request failed ({resp.status_code}): {resp.text[:500]}")
             body = resp.json()
             used = body.get("usage") or {}
-            usage.record("llm", model=body.get("model") or model, tokens_in=used.get("prompt_tokens", 0),
+            usage.record(kind, model=body.get("model") or model, tokens_in=used.get("prompt_tokens", 0),
                          tokens_out=used.get("completion_tokens", 0), cost=used.get("cost"))
             content = body["choices"][0]["message"]["content"] or ""
             try:
-                notes = MeetingNotes.model_validate_json(_strip_fences(content))
-                return _fix_owners(notes, [me, *(names or [])])
+                return model_cls.model_validate_json(_strip_fences(content))
             except ValidationError as e:
                 if attempt:
-                    raise RuntimeError(f"Model returned invalid notes: {e}") from e
+                    raise RuntimeError(f"Model returned an invalid answer: {e}") from e
                 messages += [{"role": "assistant", "content": content},
                              {"role": "user", "content": f"That did not match the schema:\n{e}\nReply with corrected JSON only."}]
     raise AssertionError("unreachable")

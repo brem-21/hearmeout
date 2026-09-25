@@ -144,7 +144,8 @@ class UsagePanel(QFrame):
         else:
             self.lay.addWidget(label(router.error or "No credit information", "muted", wrap=True))
         tokens = t.tokens_in + t.tokens_out
-        line = (f"Hear Me Out this month: {t.notes} set{'s' if t.notes != 1 else ''} of notes · "
+        mail_part = f", {t.mail} mail summar{'ies' if t.mail != 1 else 'y'}" if t.mail else ""
+        line = (f"Hear Me Out this month: {t.notes} set{'s' if t.notes != 1 else ''} of notes{mail_part} · "
                 f"{_short(tokens)} tokens ({_short(t.tokens_in)} in, {_short(t.tokens_out)} out)")
         if t.cost:
             line += f" · ${t.cost:,.4f}" if t.cost < 0.01 else f" · ${t.cost:,.2f}"

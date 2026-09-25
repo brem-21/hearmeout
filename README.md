@@ -165,6 +165,19 @@ a narrow window each pair stacks, one above the other.
 - **Mail** (a pane beside the week; below it on a narrow window): your Outlook inbox,
   with buttons to go back to the inbox, reload, or open Outlook in your browser.
   See [Show your mail](#show-your-mail-optional).
+- **Mail tab** (sidebar, under To-dos), working from the Outlook pane:
+  - **Summarize inbox**: an overview, what **needs you** (and why, with any deadline),
+    **to-dos from mail**, and **FYI**, from your newest emails' senders, subjects and
+    first lines.
+  - **Explain** on any email: opens it in the Outlook pane and tells you what it's
+    about, what's asked of you, deadlines, how urgent it is, and a suggested reply
+    (**Copy reply**).
+  - Nothing is sent to your notes model until you press a button. Summaries count
+    towards the Usage panel.
+- **New-mail notifications**: Hear Me Out looks at the Outlook pane's inbox every
+  minute and notifies you about new unread email (sender, subject and first line;
+  **Open** goes to the Mail tab). This works while Hear Me Out is in the tray too.
+  Turn it off in Settings › Integrations › Mail.
 - **The week** shows the working days, Monday to Friday, with today highlighted. **‹ ›** move between
   weeks and **Today** comes back. Hover a meeting for who's invited. Click it to join
   the call (↗), or, for a meeting you recorded, to open its notes (◆ saved,

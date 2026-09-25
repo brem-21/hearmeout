@@ -66,6 +66,7 @@ class Settings:
     mail_on_home: bool = True  # show your mail on Home
     mail_source: str = "outlook"  # "outlook": Outlook on the web in the pane; "gnome": GNOME Online Accounts
     mail_count: int = 8        # how many emails, for the GNOME list (5 to 10)
+    mail_notify: bool = True   # a notification when new email arrives (Outlook pane)
 
 
 # env var -> (settings attribute, converter)
@@ -106,6 +107,7 @@ _TOML = {
     ("mail", "show_on_home"): "mail_on_home",
     ("mail", "count"): "mail_count",
     ("mail", "source"): "mail_source",
+    ("mail", "notify"): "mail_notify",
 }
 
 
@@ -187,6 +189,7 @@ remind_before = 5  # minutes before a meeting to notify you (0 = never)
 show_on_home = true
 source = "outlook" # "outlook": Outlook on the web in the pane (sign in once); "gnome": GNOME Online Accounts
 count = 8          # emails in the GNOME list, 5 to 10
+notify = true      # a notification when new email arrives
 """
         )
         CONFIG_FILE.chmod(0o600)
