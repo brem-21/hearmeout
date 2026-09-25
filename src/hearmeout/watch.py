@@ -474,7 +474,7 @@ class Watcher(QObject):
         """The prepared meeting for a recording whose notes are made (loaded from cache if needed)."""
         if session not in self.prepared and pipeline.is_ready(session) and session not in self.jobs:
             try:
-                self.prepared[session], _ = pipeline.prepare(session, self.s)
+                self.prepared[session], _ = pipeline.prepare(session, self.s, network=False)  # UI thread
             except Exception:
                 return None
         return self.prepared.get(session)

@@ -41,7 +41,7 @@ def _remember(session: Path, **changes) -> None:
 
 
 def calendar_event(session: Path, started: datetime, info: dict,
-                   status: Callable[[str], None] = lambda msg: None) -> outlook.Event | None:
+                   status: Callable[[str], None] = lambda msg: None, network: bool = True) -> outlook.Event | None:
     """The calendar event this recording belongs to (looked up once, then kept with the recording).
     A calendar problem never stops notes from being made."""
     if info.get("event"):
@@ -49,10 +49,12 @@ def calendar_event(session: Path, started: datetime, info: dict,
     if info.get("event_checked") or not outlook.connected():
         return None
     try:
-        event = outlook.event_for(started, info.get("title_hint"), info.get("app"))
+        event = outlook.event_for(started, info.get("title_hint"), info.get("app"), network=network)
     except Exception as e:  # offline, signed out…
         status(f"Couldn't check your calendar ({e}).")
         return None
+    if event is None and not network:
+        return None  # not in the cache: leave it for the background note-making to look up
     _remember(session, event=event.to_dict() if event else None, event_checked=True)
     if event:
         status(f"Matched to “{event.subject}” in your calendar.")
@@ -88,13 +90,13 @@ def pending_sessions() -> list[Path]:
 
 
 def prepare(path: Path, s: config.Settings, *, title: str | None = None,
-            status: Callable[[str], None] = lambda msg: None) -> tuple[obsidian.Meeting, Path]:
+            status: Callable[[str], None] = lambda msg: None, network: bool = True) -> tuple[obsidian.Meeting, Path]:
     """Transcribe and summarise a session folder or any audio file.
     Returns the meeting and its working folder (delete it with cleanup() once saved).
     If it fails, the reason is kept in the session folder (see error())."""
     error_file = path / "error.txt" if path.is_dir() else None
     try:
-        result = _prepare(path, s, title=title, status=status)
+        result = _prepare(path, s, title=title, status=status, network=network)
     except Exception as e:
         if error_file:
             error_file.write_text(str(e))
@@ -118,7 +120,7 @@ def is_ready(session: Path) -> bool:
 
 
 def _prepare(path: Path, s: config.Settings, *, title: str | None,
-             status: Callable[[str], None]) -> tuple[obsidian.Meeting, Path]:
+             status: Callable[[str], None], network: bool = True) -> tuple[obsidian.Meeting, Path]:
     if path.is_dir():  # one of our session folders
         work, audio_file, two_track = path, path / "audio.ogg", True
         started = datetime.strptime(path.name, SESSION_FMT)
@@ -136,7 +138,7 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
     info = session_info(work)
     people = info.get("people") or []
     me = s.user_name or "Me"
-    event = calendar_event(work, started, info, status)
+    event = calendar_event(work, started, info, status, network)
     invited = event.others([s.user_name, *s.user_aliases]) if event else []
     if not people and len(invited) == 1:
         people = invited  # a one-on-one in the calendar
@@ -183,8 +185,9 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
     elif notes and people:
         notes.participants += [p for p in people if p not in notes.participants]
 
-    title = (title or (event.subject if event else None) or info.get("title_hint")
-             or (notes.title if notes else None) or f"Meeting {started:%H:%M}")
+    # The model's title describes what was actually discussed; the calendar or window only when there are no notes.
+    title = (title or (notes.title if notes else None) or (event.subject if event else None)
+             or info.get("title_hint") or f"Meeting {started:%H:%M}")
     meeting = obsidian.Meeting(title=title, started=started, duration_s=duration or utterances[-1].end,
                                utterances=utterances, notes=notes, audio=audio_file, me=me, event=event)
     return meeting, work

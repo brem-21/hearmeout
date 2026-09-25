@@ -69,8 +69,10 @@ class SavedMeeting:
                 out[-1].quote = line.strip()[3:].strip()
         return out
 
-    def open_todos(self) -> int:
-        return sum(not t.done for t in self.tasks("my_todos"))
+    def open_todos(self, team: bool = False) -> int:
+        """Open to-dos (yours; with team=True, the team's tasks too)."""
+        keys = ("my_todos", "team_tasks") if team else ("my_todos",)
+        return sum(not t.done for k in keys for t in self.tasks(k))
 
     def transcript(self) -> list[tuple[str, float, str]]:
         """(speaker, start seconds, text) for each line of the saved transcript."""
@@ -185,14 +187,14 @@ class PendingRecording:
 
     @property
     def title(self) -> str:
+        try:  # the model's title, once notes are made
+            return json.loads((self.session / "notes.json").read_text())["title"]
+        except (OSError, ValueError, KeyError):
+            pass
         if self.event_title:
             return self.event_title
         if self.title_hint:
             return self.title_hint
-        try:
-            return json.loads((self.session / "notes.json").read_text())["title"]
-        except (OSError, ValueError, KeyError):
-            pass
         if self.people:
             return f"Call with {', '.join(p.split()[0] for p in self.people)}"
         return f"{self.app or 'Recording'}, {self.started:%H:%M}"

@@ -339,11 +339,14 @@ def todos_page(win) -> QWidget:
     scroll.setWidget(body)
 
     tasks = _collect(win)
-    open_mine = [t for _, t, team in tasks if not t.done and not team]
+    open_tasks = [(m, t, team) for m, t, team in tasks if not t.done]
+    mine = sum(not team for _, _, team in open_tasks)
+    theirs = len(open_tasks) - mine
     col.addWidget(label("To-dos", "h1"))
-    n_meet = len({m.folder for m, t, team in tasks if not t.done and not team})
-    col.addWidget(label(f"{len(open_mine)} open to-do{'s' if len(open_mine) != 1 else ''}"
-                        + (f" from {n_meet} meeting{'s' if n_meet != 1 else ''}" if n_meet else ""), "muted"))
+    n_meet = len({m.folder for m, _, _ in open_tasks})
+    counts = f"{mine} yours" + (f" · {theirs} for the team" if view["team"] else "")
+    col.addWidget(label(f"{counts} open" + (f", from {n_meet} meeting{'s' if n_meet != 1 else ''}" if n_meet else ""),
+                        "muted"))
 
     bar = QHBoxLayout()
     bar.setSpacing(6)
@@ -357,7 +360,7 @@ def todos_page(win) -> QWidget:
         b.clicked.connect(lambda _=False, k=key: _set_view(win, by=k))
         bar.addWidget(b)
     bar.addSpacing(10)
-    for key, text in (("team", "Include team tasks"), ("done", "Show done")):
+    for key, text in (("team", "Team tasks"), ("done", "Show done")):
         cb = QCheckBox(text)
         cb.setChecked(view[key])
         cb.toggled.connect(lambda on, k=key: _set_view(win, **{k: on}))
@@ -372,7 +375,7 @@ def todos_page(win) -> QWidget:
         el = QVBoxLayout(empty)
         el.setContentsMargins(24, 22, 24, 22)
         el.addWidget(label("Nothing to do" if tasks else "No to-dos yet", "h2"))
-        el.addWidget(label("To-dos from the meetings you save to Obsidian show up here." if not tasks
+        el.addWidget(label("To-dos and team tasks from the meetings you save to Obsidian show up here." if not tasks
                            else "Everything is done. Tick “Show done” to see finished to-dos.", "muted", wrap=True))
         col.addWidget(empty)
         col.addStretch(1)
@@ -440,8 +443,10 @@ def _todo_row(win, m, t: library.Task, team: bool, text: str, owner: str | None,
         q = ElidedLabel(f"“{t.quote}”", "faint")
         tl.addWidget(q)
     lay.addLayout(tl, 1)
-    if team and owner:
-        lay.addWidget(chip(owner, "users"), 0, Qt.AlignTop)
+    if team:
+        lay.addWidget(chip(owner or "Team", "users"), 0, Qt.AlignTop)
+    else:
+        lay.addWidget(chip("You", "check"), 0, Qt.AlignTop)
     if due:
         txt, kind = friendly_due(due, t.done)
         lay.addWidget(chip(txt, "calendar", kind), 0, Qt.AlignTop)

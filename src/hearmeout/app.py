@@ -172,7 +172,7 @@ class MainWindow(QMainWindow):
         self.banner_for: str | None = None
         self.weeks = agenda.Weeks()  # which week Home's calendar shows
         self.weeks.changed.connect(lambda: self.refresh())
-        self.todo_view = {"by": "date", "done": False, "team": False}
+        self.todo_view = {"by": "date", "done": False, "team": True}
         self.setWindowTitle("Hear Me Out")
         self.resize(1180, 760)
         self.setMinimumSize(860, 560)
@@ -207,7 +207,7 @@ class MainWindow(QMainWindow):
                                on_click=self.go_home)
         self.home_btn.setCheckable(True)
         s.addWidget(self.home_btn)
-        self.todos_btn = button("To-dos", "tasks", "nav", tip="All your to-dos, by date or by meeting",
+        self.todos_btn = button("To-dos", "tasks", "nav", tip="Your to-dos and team tasks, by date or by meeting",
                                 icon_color=T["muted"], on_click=lambda: self.select("todos"))
         self.todos_btn.setCheckable(True)
         s.addWidget(self.todos_btn)
@@ -654,7 +654,7 @@ class MainWindow(QMainWindow):
         self.status.setText("Recording" if recording else self.w.status_text())
         self.home_btn.setChecked(self.current == "home")
         self.todos_btn.setChecked(self.current == "todos")
-        n = sum(m.open_todos() for m in getattr(self, "saved", []))
+        n = sum(m.open_todos(team=self.todo_view["team"]) for m in getattr(self, "saved", []))
         self.todos_btn.setText(f"To-dos  ·  {n}" if n else "To-dos")
         colour = (T["red"] if recording else T["amber"] if self.w.jobs
                   else T["green"] if self.w.mode != "off" else T["faint"])
