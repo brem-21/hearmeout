@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from functools import cached_property
 from datetime import datetime
 from pathlib import Path
 
@@ -130,36 +131,50 @@ def _json(value: str, default):
         return default
 
 
+def _files_in(folder: Path) -> dict[str, Path]:
+    """A meeting folder's notes, by the end of their names (" - Summary.md"…), so they're
+    still found after you rename the folder or the files in Obsidian."""
+    files: dict[str, Path] = {}
+    for p in folder.iterdir():
+        for key, (_, suffix) in obsidian.ITEMS.items():
+            if key not in files and p.name.endswith(suffix) and p.is_file():
+                files[key] = p
+    return files
+
+
 def saved_meetings(s: config.Settings) -> list[SavedMeeting]:
-    """Meetings Hear Me Out saved into any known vault, newest first."""
-    vaults = obsidian.find_vaults()
+    """Meetings Hear Me Out saved into any known vault, newest first: the vault and folder in
+    Settings, every other place you've saved to, and any folder of them inside (so a meeting
+    you moved into a subfolder in Obsidian is still found)."""
+    places: list[tuple[Path, str]] = []
     if s.vault and Path(s.vault).expanduser().is_dir():
-        vaults.insert(0, Path(s.vault).expanduser())
+        places.append((Path(s.vault).expanduser(), s.folder))
+    places += [(v, s.folder) for v in obsidian.find_vaults()]
+    places += obsidian.saved_places()
     out: list[SavedMeeting] = []
     seen: set[Path] = set()
-    for vault in vaults:
-        base = vault / s.folder
-        if base in seen or not base.is_dir():
+    for vault, folder in places:
+        base = vault / folder
+        if not base.is_dir():
             continue
-        seen.add(base)
-        for folder in base.iterdir():
-            if not folder.is_dir():
+        # every note Hear Me Out wrote under this folder, however deep
+        for note in base.rglob("*.md"):
+            meeting_dir = note.parent
+            if meeting_dir in seen or not any(note.name.endswith(sfx) for _, sfx in obsidian.ITEMS.values()):
                 continue
-            files = {key: folder / f"{folder.name}{suffix}" for key, (_, suffix) in obsidian.ITEMS.items()}
-            files = {k: p for k, p in files.items() if p.exists()}
+            seen.add(meeting_dir)
+            files = _files_in(meeting_dir)
             notes = [p for k, p in files.items() if k != "audio"]
-            if not notes:
-                continue
-            fm = _frontmatter(notes[0])
+            fm = _frontmatter(notes[0]) if notes else {}
             if fm.get("source") != "hearmeout":
                 continue
             try:
                 started = datetime.strptime(f"{fm.get('date')} {fm.get('time', '00:00').strip(chr(34))}",
                                             "%Y-%m-%d %H:%M")
             except ValueError:
-                started = datetime.fromtimestamp(folder.stat().st_mtime)
+                started = datetime.fromtimestamp(meeting_dir.stat().st_mtime)
             out.append(SavedMeeting(
-                folder=folder, vault=vault, title=_json(fm.get("meeting", '""'), "") or folder.name[11:],
+                folder=meeting_dir, vault=vault, title=_json(fm.get("meeting", '""'), "") or meeting_dir.name[11:],
                 started=started, duration_min=int(fm.get("duration_minutes") or 0),
                 participants=_json(fm.get("participants", "[]"), []), files=files))
     out.sort(key=lambda m: m.started, reverse=True)
@@ -185,7 +200,7 @@ class PendingRecording:
     def audio(self) -> Path:
         return self.session / "audio.ogg"
 
-    @property
+    @cached_property
     def title(self) -> str:
         try:  # the model's title, once notes are made
             return json.loads((self.session / "notes.json").read_text())["title"]

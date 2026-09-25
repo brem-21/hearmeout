@@ -93,23 +93,38 @@ class Weeks(QObject):
             job.wait(5000)
 
 
+def assign(events: list[outlook.Event], meetings: list) -> dict[tuple, object]:
+    """Which calendar event each recording belongs to: {(event id, start): meeting}.
+    Each recording goes to one event only: the one already running when it started (the most
+    recently started, if several overlap), else the one starting within 15 minutes."""
+    out: dict[tuple, object] = {}
+    timed = [e for e in events if not e.all_day]
+    for m in sorted(meetings, key=lambda m: m.started):
+        running = [e for e in timed if e.start <= m.started < e.end]
+        soon = [e for e in timed if m.started < e.start <= m.started + EARLY]
+        same = [e for e in running + soon if e.subject.strip().lower() == m.title.strip().lower()]
+        best = (same[0] if same else max(running, key=lambda e: e.start) if running
+                else min(soon, key=lambda e: e.start) if soon else None)
+        if best is not None:
+            out.setdefault((best.id, best.start), m)
+    return out
+
+
 def recorded(e: outlook.Event, meetings: list) -> object | None:
     """The saved meeting or recording still to save that belongs to this calendar event, if any."""
-    found = [m for m in meetings if e.start - EARLY <= m.started < e.end]
-    if not found:
-        return None
-    same = [m for m in found if m.title.strip().lower() == e.subject.strip().lower()]
-    return (same or found)[0]
+    return assign([e], meetings).get((e.id, e.start))
 
 
 def week_section(win, col: QVBoxLayout) -> None:
-    """The week calendar on Home: ‹ Today ›, seven days, click a meeting to join it or open its notes."""
+    """The week calendar on Home: ‹ Today ›, Monday to Friday, click a meeting to join it or open its notes."""
     if not outlook.connected():
         return
     weeks: Weeks = win.weeks
     days = weeks.days()
+    if days is not None:
+        days = {d: evs for d, evs in days.items() if d.weekday() < 5}  # the working week: Monday to Friday
     today, now = date.today(), datetime.now()
-    monday, sunday = weeks.monday, weeks.monday + timedelta(days=6)
+    monday, sunday = weeks.monday, weeks.monday + timedelta(days=4)
 
     col.addSpacing(6)
     head = QHBoxLayout()
@@ -149,9 +164,10 @@ def week_section(win, col: QVBoxLayout) -> None:
 
     row = QHBoxLayout(grid)
     row.setContentsMargins(6, 8, 6, 8)
-    row.setSpacing(2)
+    row.setSpacing(4)
     me = [win.w.s.user_name, *win.w.s.user_aliases]
-    meetings = [*library.pending_recordings(), *getattr(win, "saved", [])]
+    meetings = [*(getattr(win, "pending", None) or library.pending_recordings()), *getattr(win, "saved", [])]
+    owners = assign([e for evs in days.values() for e in evs], meetings)
     for d, events in days.items():
         day_col = QVBoxLayout()
         day_col.setContentsMargins(3, 6, 3, 6)
@@ -172,14 +188,13 @@ def week_section(win, col: QVBoxLayout) -> None:
             none.setAlignment(Qt.AlignHCenter)
             day_col.addWidget(none)
         for e in events:
-            day_col.addWidget(_event_box(win, e, now, me, recorded(e, meetings) if not e.all_day else None))
+            day_col.addWidget(_event_box(win, e, now, me, owners.get((e.id, e.start))))
         day_col.addStretch(1)
         holder = QWidget()
         holder.setLayout(day_col)
-        holder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # seven equal columns
+        holder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # five equal columns
         if is_today:
             holder.setObjectName("today")
-            holder.setStyleSheet(f"QWidget#today {{ background: {T['accent_soft']}; border-radius: 8px; }}")
             holder.setAttribute(Qt.WA_StyledBackground, True)
         row.addWidget(holder, 1)
     col.addWidget(grid)
@@ -188,21 +203,18 @@ def week_section(win, col: QVBoxLayout) -> None:
 def _event_box(win, e: outlook.Event, now: datetime, me: list[str], notes) -> QWidget:
     """One meeting: time and title, with an icon for Join / notes saved / recording to save."""
     live, over = e.start <= now < e.end, e.end <= now
-    colour = T["red"] if live else T["faint"] if over else T["accent"]
+    state = "live" if live else "over" if over else "next"
     box = ClickableCard()
     box.setProperty("card", False)
-    box.setObjectName("ev")
+    box.setProperty("ev", state)  # styled by the app's stylesheet (much faster than one per box)
     box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
-    box.setStyleSheet(f"QFrame#ev {{ background: {T['surface'] if not over else 'transparent'}; "
-                      f"border: 1px solid {T['border']}; border-left: 3px solid {colour}; border-radius: 6px; }}"
-                      f"QFrame#ev:hover {{ border-color: {T['accent']}; }}")
     lay = QVBoxLayout(box)
     lay.setContentsMargins(5, 3, 3, 4)
     lay.setSpacing(1)
     top = QHBoxLayout()
     top.setSpacing(2)
     when = label("All day" if e.all_day else ("Now" if live else f"{e.start:%H:%M}"))
-    when.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {colour}; border: none; background: transparent;")
+    when.setProperty("evtime", state)
     top.addWidget(when)
     top.addStretch(1)
     joinable = bool(e.join_url) and not over
@@ -212,11 +224,10 @@ def _event_box(win, e: outlook.Event, now: datetime, me: list[str], notes) -> QW
     elif joinable:
         top.addWidget(icon_label("external", T["accent"], 12))
     lay.addLayout(top)
-    text = e.subject if len(e.subject) <= 30 else e.subject[:28].rstrip() + "…"  # full title on hover
+    text = e.subject if len(e.subject) <= 48 else e.subject[:46].rstrip() + "…"  # full title on hover
     title = label(text, wrap=True)
     title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
-    title.setStyleSheet(f"font-size: 12px; color: {T['faint'] if over and notes is None else T['text']}; "
-                        "border: none; background: transparent;")
+    title.setProperty("evtitle", "dim" if over and notes is None else "")
     lay.addWidget(title)
 
     others = e.others(me)

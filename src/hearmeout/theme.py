@@ -217,6 +217,18 @@ QListWidget#Meetings::item:selected {{ background: {t['selected']}; }}
 QFrame[card="true"] {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 12px; }}
 QFrame[card="true"][dim="true"] {{ background: {t['raised']}; }}
 QFrame[card="true"][clickable="true"]:hover {{ border-color: {t['accent']}; background: {t['raised']}; }}
+QFrame[ev] {{ background: {t['surface']}; border: 1px solid {t['border']}; border-left: 3px solid {t['accent']};
+             border-radius: 6px; }}
+QFrame[ev="live"] {{ border-left-color: {t['red']}; }}
+QFrame[ev="over"] {{ background: transparent; border-left-color: {t['faint']}; }}
+QFrame[ev]:hover {{ border-color: {t['accent']}; }}
+QFrame[ev] QLabel {{ border: none; background: transparent; }}
+QLabel[evtime] {{ font-size: 11px; font-weight: 600; color: {t['accent']}; }}
+QLabel[evtime="live"] {{ color: {t['red']}; }}
+QLabel[evtime="over"] {{ color: {t['faint']}; }}
+QLabel[evtitle] {{ font-size: 12px; color: {t['text']}; }}
+QLabel[evtitle="dim"] {{ color: {t['faint']}; }}
+QWidget#today {{ background: {t['accent_soft']}; border-radius: 8px; }}
 QPushButton[variant="seg-left"], QPushButton[variant="seg-right"] {{ background: {t['surface']};
     border: 1px solid {t['border_strong']}; padding: 6px 10px; color: {t['muted']}; font-weight: 600; }}
 QPushButton[variant="seg-left"] {{ border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }}

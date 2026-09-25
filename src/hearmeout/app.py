@@ -300,6 +300,7 @@ class MainWindow(QMainWindow):
         cur, query = self.current, self.search.text()
         self.views.clear()
         self.bars.clear()
+        self._home_widget = None  # its colours are the old theme's
         self.takeCentralWidget().deleteLater()
         self._build()
         self.search.setText(query)
@@ -310,32 +311,17 @@ class MainWindow(QMainWindow):
 
     def refresh(self, force: bool = False) -> None:
         query = self.search.text().strip()
-        self.items.clear()
-        self.list.blockSignals(True)
-        scroll = self.list.verticalScrollBar().value()
-        self.list.clear()
+        # Read the recordings and the vault once per refresh; the pages below reuse these.
+        self.pending = library.pending_recordings()
+        self.saved = library.saved_meetings(self.w.s)
 
-        def section(text: str) -> None:
-            item = QListWidgetItem(self.list)
-            item.setFlags(Qt.ItemIsEnabled)
-            w = label(text.upper(), "section")
-            w.setContentsMargins(12, 12, 0, 2)
-            item.setSizeHint(QSize(0, 32))
-            self.list.setItemWidget(item, w)
-
-        def add(key: str, obj, row: _Row) -> None:
-            item = QListWidgetItem(self.list)
-            item.setData(Qt.UserRole, key)
-            item.setSizeHint(QSize(0, 56))
-            self.list.setItemWidget(item, row)
-            self.items[key] = obj
-
-        pending = [p for p in library.pending_recordings() if not query or query.lower() in p.title.lower()]
+        rows: list[tuple] = []  # ("section", text) or (key, obj, title, sub, badge, kind, dot)
+        pending = [p for p in self.pending if not query or query.lower() in p.title.lower()]
         if self.w.recorder is not None or pending:
-            section("To save")
+            rows.append(("section", "To save"))
         if self.w.recorder is not None:
-            add("recording", None, _Row("Recording now", self.w.call.app if self.w.call else "Started by you",
-                                        "REC", "rec", dot=T["red"]))
+            rows.append(("recording", None, "Recording now", self.w.call.app if self.w.call else "Started by you",
+                         "REC", "rec", T["red"]))
         for p in pending:
             sub = " · ".join(x for x in (library.when(p.started), f"{max(1, round(p.duration_s / 60))} min", p.app)
                              if x)
@@ -347,22 +333,47 @@ class MainWindow(QMainWindow):
                 b = ("Ready to save", "ready")
             else:
                 b = ("Not processed", "plain")
-            add(p.key, p, _Row(p.title, sub, *b))
-
-        self.saved = library.saved_meetings(self.w.s)
+            rows.append((p.key, p, p.title, sub, *b, None))
         shown = [m for m in self.saved if not query or m.matches(query)]
         day = None
         for m in shown:
             if m.started.date() != day:
                 day = m.started.date()
-                section(_day(day))
+                rows.append(("section", _day(day)))
             todos = m.open_todos()
-            add(m.key, m, _Row(m.title, f"{m.started:%H:%M} · {max(1, m.duration_min)} min",
-                               f"{todos} to-do{'s' if todos != 1 else ''}" if todos else "", "ok"))
+            rows.append((m.key, m, m.title, f"{m.started:%H:%M} · {max(1, m.duration_min)} min",
+                         f"{todos} to-do{'s' if todos != 1 else ''}" if todos else "", "ok", None))
         if query and not shown and not pending:
-            section("No matches")
-        self.list.verticalScrollBar().setValue(scroll)
-        self.list.blockSignals(False)
+            rows.append(("section", "No matches"))
+
+        # Rebuilding the list is the slow part, so only do it when something in it changed.
+        signature = [r if r[0] == "section" else (r[0], *r[2:]) for r in rows]
+        if force or signature != getattr(self, "_list_signature", None):
+            self._list_signature = signature
+            self.items.clear()
+            self.list.blockSignals(True)
+            scroll = self.list.verticalScrollBar().value()
+            self.list.clear()
+            for r in rows:
+                item = QListWidgetItem(self.list)
+                if r[0] == "section":
+                    item.setFlags(Qt.ItemIsEnabled)
+                    w = label(r[1].upper(), "section")
+                    w.setContentsMargins(12, 12, 0, 2)
+                    item.setSizeHint(QSize(0, 32))
+                    self.list.setItemWidget(item, w)
+                else:
+                    key, obj, title, sub, badge_text, kind, dot = r
+                    item.setData(Qt.UserRole, key)
+                    item.setSizeHint(QSize(0, 56))
+                    self.list.setItemWidget(item, _Row(title, sub, badge_text, kind, dot=dot))
+                    self.items[key] = obj
+            self.list.verticalScrollBar().setValue(scroll)
+            self.list.blockSignals(False)
+        else:
+            for r in rows:  # same rows: just point at the fresh objects
+                if r[0] != "section":
+                    self.items[r[0]] = r[1]
 
         keys = [self.list.item(i).data(Qt.UserRole) for i in range(self.list.count())]
         if self.current == "settings":
@@ -385,8 +396,19 @@ class MainWindow(QMainWindow):
             self.list.clearSelection()
             self.list.setCurrentRow(-1)
             self.list.blockSignals(False)
-            if force or getattr(self.detail.currentWidget(), "state_key", None) != self._home_key():
-                self._show(self._home_page())
+            key = self._home_key()
+            if force or getattr(self.detail.currentWidget(), "state_key", None) != key:
+                # Home is kept once built: coming back to it is instant unless something on it changed.
+                cached = getattr(self, "_home_widget", None)
+                if cached is not None and not force and cached.state_key == key:
+                    self._show(cached)
+                else:
+                    page = self._home_page()
+                    self._show(page)
+                    if cached is not None and cached is not page:
+                        self.detail.removeWidget(cached)
+                        cached.deleteLater()
+                    self._home_widget = page
         else:
             self._set_current(target, rebuild=force or target != self.current or self._stale(target))
         self._tick()
@@ -629,7 +651,7 @@ class MainWindow(QMainWindow):
         if self.detail.indexOf(page) < 0:
             self.detail.addWidget(page)
         self.detail.setCurrentWidget(page)
-        if old is not None and old not in self.views.values():
+        if old is not None and old not in self.views.values() and old is not getattr(self, "_home_widget", None):
             self.detail.removeWidget(old)
             old.deleteLater()
 
@@ -700,7 +722,7 @@ class MainWindow(QMainWindow):
 
     def _recent(self) -> list[object]:
         """The latest meetings: recordings still to save and saved ones, newest first."""
-        pending = library.pending_recordings()
+        pending = getattr(self, "pending", None) or library.pending_recordings()
         items = sorted([*pending, *getattr(self, "saved", [])], key=lambda o: o.started, reverse=True)
         return items[:5]
 
@@ -779,7 +801,7 @@ class MainWindow(QMainWindow):
                                   [button("Open settings", "settings", "primary", on_click=self.open_settings)]))
 
         # at-a-glance tiles
-        pending = library.pending_recordings()
+        pending = getattr(self, "pending", None) or library.pending_recordings()
         todos_all = sum(m.open_todos() for m in getattr(self, "saved", []))
         tiles = QHBoxLayout()
         tiles.setSpacing(12)
@@ -806,7 +828,7 @@ class MainWindow(QMainWindow):
         first_pending = pending[0].key if pending else None
         tile(str(len(pending)), "recording to save" if len(pending) == 1 else "recordings to save", "mic",
              T["accent"], (lambda: self.select(first_pending)) if first_pending else None)
-        tile(str(todos_all), "open to-do" if todos_all == 1 else "open to-dos", "tasks", T["green"],
+        tile(str(todos_all), "your open to-do" if todos_all == 1 else "your open to-dos", "tasks", T["green"],
              lambda: self.select("todos"), "See all your to-dos")
         watching = self.w.mode != "off"
         tile("On" if watching else "Off", "watching for meetings" if watching else "meeting detection",

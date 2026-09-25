@@ -111,8 +111,19 @@ def signed_in() -> bool:
     return bool(_load_tokens().get("refresh_token"))
 
 
+_ics_cache: tuple[float, str] = (-1.0, "")
+
+
 def ics_url() -> str:
-    url = config.load().ics_url.strip()
+    """The published calendar link from config.toml (re-read only when the file changes)."""
+    global _ics_cache
+    try:
+        mtime = config.CONFIG_FILE.stat().st_mtime
+    except OSError:
+        mtime = 0.0
+    if _ics_cache[0] != mtime:
+        _ics_cache = (mtime, config.load().ics_url.strip())
+    url = _ics_cache[1]
     return "https://" + url[len("webcal://"):] if url.lower().startswith("webcal://") else url
 
 
@@ -456,8 +467,23 @@ def refresh(days: int = 2) -> list[Event]:
     return events
 
 
+_cache_read: tuple[float, tuple] = (-1.0, ([], None, None))
+
+
 def cached() -> tuple[list[Event], datetime | None, datetime | None]:
-    """The last fetched events and the time range they cover."""
+    """The last fetched events and the time range they cover (re-read only when the file changes)."""
+    global _cache_read
+    try:
+        mtime = CACHE_FILE.stat().st_mtime
+    except OSError:
+        return [], None, None
+    if _cache_read[0] == mtime:
+        return _cache_read[1]
+    _cache_read = (mtime, _read_cache())
+    return _cache_read[1]
+
+
+def _read_cache() -> tuple[list[Event], datetime | None, datetime | None]:
     try:
         data = json.loads(CACHE_FILE.read_text())
         return ([Event.from_dict(e) for e in data["events"]],

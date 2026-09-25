@@ -154,6 +154,25 @@ def meeting_folder(vault: Path, folder: str, meeting: Meeting) -> Path:
     return path
 
 
+PLACES_FILE = Path(__import__("os").environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "hearmeout" / "saved-places.json"
+
+
+def saved_places() -> list[tuple[Path, str]]:
+    """Every (vault, folder) meetings were saved to, so the app finds them all."""
+    try:
+        return [(Path(v), f) for v, f in json.loads(PLACES_FILE.read_text())]
+    except (OSError, ValueError, TypeError):
+        return []
+
+
+def remember_place(vault: Path, folder: str) -> None:
+    places = saved_places()
+    if (vault, folder) not in places:
+        places.append((vault, folder))
+        PLACES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PLACES_FILE.write_text(json.dumps([[str(v), f] for v, f in places], indent=1))
+
+
 def save(meeting: Meeting, vault: Path, folder: str, keys: list[str]) -> Iterator[Progress]:
     """Write the chosen items one by one, yielding progress after each file."""
     keys = [k for k in ITEMS if k in keys]  # canonical order
@@ -161,6 +180,7 @@ def save(meeting: Meeting, vault: Path, folder: str, keys: list[str]) -> Iterato
         return
     target = meeting_folder(vault, folder, meeting)
     target.mkdir(parents=True)
+    remember_place(vault, folder)
     name = target.name
     paths = {k: target / f"{name}{ITEMS[k][1]}" for k in keys}
     links = {k: _wikilink(vault, paths[k], ITEMS[k][0]) for k in keys if k != "audio"}

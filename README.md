@@ -143,15 +143,16 @@ The app opens on **Home**: a greeting, **Record now**, a reminder if your name o
 keys are still missing, your week from the calendar, your recent meetings and your
 open to-dos (tick them off right there).
 
-- **The week** runs Monday to Sunday with today highlighted. **‹ ›** move between
+- **The week** shows the working days, Monday to Friday, with today highlighted. **‹ ›** move between
   weeks and **Today** comes back. Hover a meeting for who's invited. Click it to join
   the call (↗), or, for a meeting you recorded, to open its notes (◆ saved,
   🎙 still to save).
 - **Reminders:** a notification with **Join** a few minutes before each meeting
   (Settings › Integrations › Remind me: 5 minutes by default, or Never).
-- **To-dos** (sidebar, or the to-dos tile) lists every to-do from your saved meetings
-  **by date** (Overdue, Today, Tomorrow, Later this week, Next week, Later, No due
-  date) or **by meeting**, optionally with team tasks and finished ones. Ticking one
+- **To-dos** (sidebar, or the to-dos tile) lists your to-dos and the team's tasks
+  (with who owns each) from your saved meetings, **by date** (Overdue, Today,
+  Tomorrow, Later this week, Next week, Later, No due date) or **by meeting**. Untick
+  **Team tasks** for just yours, or tick **Show done** for finished ones. Ticking one
   updates its note in Obsidian. Esc or Alt+Home comes back to it.
 
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
@@ -168,7 +169,7 @@ meetings; opening it again (from the app menu or the tray) brings the window bac
 |---|---|
 | **To save**: *Ready to save* | read the summary, to-dos (with the quote each came from and **Hear it**), team tasks and transcript; rename the meeting; leave out tasks; pick what goes into Obsidian, then **Save**. A progress bar counts each file. |
 | **To save**: *Failed* | see why (no internet, bad API key…), **Try again**, play or delete the recording |
-| **Saved in Obsidian** | the same view: tick off to-dos (the note in Obsidian updates), click a transcript time to hear it, **Open in Obsidian** |
+| **Saved in Obsidian** (wherever you saved it, even if you rename or move the folder in Obsidian) | the same view: tick off to-dos (the note in Obsidian updates), click a transcript time to hear it, **Open in Obsidian** |
 
 Right-click a meeting for **Open in Obsidian**, **Show folder** or **Make notes**.
 Select several (or **Select everything**) and press Delete to **Move to Trash**:
@@ -193,7 +194,8 @@ chose never to be asked about, and **Start at login**. On GNOME the tray icon ne
 ### With your calendar
 
 When your calendar is connected, a recording is matched to the event it overlaps
-(starting up to 15 minutes early). The note is named after the event, the summary
+(starting up to 15 minutes early). The model still writes the meeting's title; the
+event's name is only used when there are no notes. The summary
 gets a **From the invite** section (organiser, invitees, agenda, a link to Outlook),
 and the frontmatter lists who was `invited`. A one-on-one shows the other person's
 name in the transcript instead of "Them".
