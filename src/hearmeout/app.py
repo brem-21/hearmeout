@@ -312,6 +312,9 @@ class MainWindow(QMainWindow):
         self.search.setText(query)
         self.current = cur
         self.refresh(force=True)
+        view = getattr(self, "_outlook_view", None)
+        if view is not None:
+            view.reload()  # web pages only pick up light / dark when they load
 
     # ------------------------------------------------------------------ sidebar
 
