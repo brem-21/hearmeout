@@ -11,7 +11,7 @@ from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QBoxLayout, QCheckBox, QHBoxLayout, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from . import config, library, mail, outlook, theme
+from . import config, library, mail, outlook, outlookweb, theme
 from .theme import T
 from .views import ClickableCard, ElidedLabel, button, card, chip, friendly_due, icon_label, label
 
@@ -266,10 +266,16 @@ def _open(url: str) -> None:
 # --------------------------------------------------------------------------- mail
 
 
+def _outlook_pane(win) -> bool:
+    return win.w.s.mail_source == "outlook" and outlookweb.available()
+
+
 def mail_key(win) -> str:
     s = win.w.s
     if not s.mail_on_home:
         return "mail:off"
+    if _outlook_pane(win):
+        return "mail:outlook"  # the web view updates itself
     messages, fetched = mail.cached()
     return (f"mail:{mail.connected()}:{fetched}:{win.w.mail_error}:{s.mail_count}:{date.today()}:"
             + ",".join(f"{m.id[-12:]}{int(m.unread)}" for m in messages[:s.mail_count]))
@@ -307,6 +313,8 @@ def mail_section(win, col: QVBoxLayout) -> None:
 
 
 def mail_pane(win) -> QWidget:
+    if _outlook_pane(win):
+        return outlook_pane(win)
     s = win.w.s
     pane = card()
     pane.setProperty("pane", "mail")
@@ -362,6 +370,32 @@ def mail_pane(win) -> QWidget:
             outer.addWidget(_rule())
         outer.addWidget(_mail_row(m))
     outer.addStretch(1)
+    return pane
+
+
+def outlook_pane(win) -> QWidget:
+    """Outlook on the web in the pane (the same view all session, so it isn't reloaded)."""
+    pane = card()
+    pane.setProperty("pane", "mail")
+    outer = QVBoxLayout(pane)
+    outer.setContentsMargins(6, 10, 6, 6)
+    outer.setSpacing(6)
+    head = QHBoxLayout()
+    head.setContentsMargins(10, 0, 4, 0)
+    head.setSpacing(6)
+    head.addWidget(icon_label("mail", T["accent"], 16))
+    head.addWidget(label("Mail", "h2"))
+    head.addWidget(label("Outlook", "muted"), 0, Qt.AlignBottom)
+    head.addStretch(1)
+    view = win.outlook_view()
+    head.addWidget(button("", "home", "ghost", tip="Back to your inbox", icon_color=T["muted"],
+                          on_click=lambda: view.load(QUrl(outlookweb.INBOX))))
+    head.addWidget(button("", "refresh", "ghost", tip="Reload", icon_color=T["muted"], on_click=view.reload))
+    head.addWidget(button("", "external", "ghost", tip="Open Outlook in your browser", icon_color=T["muted"],
+                          on_click=lambda: _open(view.url().toString() or outlookweb.INBOX)))
+    outer.addLayout(head)
+    view.setMinimumHeight(520)
+    outer.addWidget(view, 1)
     return pane
 
 

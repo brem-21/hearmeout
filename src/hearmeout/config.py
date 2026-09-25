@@ -63,8 +63,9 @@ class Settings:
     ics_url: str = ""  # a published calendar link (Outlook › Shared calendars › Publish): no sign-in needed
     remind_before: int = 5  # minutes before a meeting to notify you (0 = never)
 
-    mail_on_home: bool = True  # show recent emails on Home (from GNOME Online Accounts › Microsoft 365)
-    mail_count: int = 8        # how many (5 to 10)
+    mail_on_home: bool = True  # show your mail on Home
+    mail_source: str = "outlook"  # "outlook": Outlook on the web in the pane; "gnome": GNOME Online Accounts
+    mail_count: int = 8        # how many emails, for the GNOME list (5 to 10)
 
 
 # env var -> (settings attribute, converter)
@@ -104,6 +105,7 @@ _TOML = {
     ("microsoft", "remind_before"): "remind_before",
     ("mail", "show_on_home"): "mail_on_home",
     ("mail", "count"): "mail_count",
+    ("mail", "source"): "mail_source",
 }
 
 
@@ -181,9 +183,10 @@ ics_url = ""       # or, with no sign-in: your calendar's published ICS link
 remind_before = 5  # minutes before a meeting to notify you (0 = never)
 
 [mail]
-# Recent emails on Home, from the Microsoft 365 account in GNOME Settings › Online Accounts.
+# Your mail on Home.
 show_on_home = true
-count = 8          # 5 to 10
+source = "outlook" # "outlook": Outlook on the web in the pane (sign in once); "gnome": GNOME Online Accounts
+count = 8          # emails in the GNOME list, 5 to 10
 """
         )
         CONFIG_FILE.chmod(0o600)

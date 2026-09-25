@@ -6,7 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import httpx
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, QUrl, Signal
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QHBoxLayout, QLineEdit,
     QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
@@ -348,30 +348,38 @@ class SettingsPage(QWidget):
         self.remind.setToolTip("A notification with a Join button, for meetings in your connected calendar")
         f.addRow("Remind me", self.remind)
 
-        # mail, through GNOME Online Accounts
+        # mail on Home: Outlook on the web in the pane, or a list through GNOME Online Accounts
+        from . import outlookweb
         mail_box = QVBoxLayout()
         mail_box.setSpacing(6)
-        who = mail.account_name()
-        status = label(f"Using {who} from GNOME Online Accounts." if who else
-                       "Add your work account in GNOME <b>Settings › Online Accounts › Microsoft 365</b> "
-                       "to see your recent emails on Home. GNOME signs you in: no Azure setup.",
-                       "muted", wrap=True)
-        if who:
-            status.setStyleSheet(f"color: {T['green']};")
-        mail_box.addWidget(status)
         row = QHBoxLayout()
-        self.mail_show = QCheckBox("Show recent emails on Home")
+        self.mail_show = QCheckBox("Show my mail on Home")
         self.mail_show.setChecked(self.s.mail_on_home)
         row.addWidget(self.mail_show)
+        self.mail_source = QComboBox()
+        self.mail_source.addItem("Outlook on the web", "outlook")
+        self.mail_source.addItem("GNOME Online Accounts", "gnome")
+        self.mail_source.setCurrentIndex(max(0, self.mail_source.findData(self.s.mail_source)))
+        row.addWidget(self.mail_source)
         self.mail_count = QComboBox()
         for n in range(5, 11):
             self.mail_count.addItem(f"{n} emails", n)
         self.mail_count.setCurrentIndex(max(0, self.mail_count.findData(max(5, min(10, self.s.mail_count)))))
         row.addWidget(self.mail_count)
-        row.addWidget(button("Open Online Accounts", "external", on_click=_open_online_accounts))
         row.addStretch(1)
         mail_box.addLayout(row)
+        self.mail_status = label("", "muted", wrap=True)
+        mail_box.addWidget(self.mail_status)
+        actions = QHBoxLayout()
+        self.mail_signout = button("Sign out of Outlook", "x", on_click=self._outlook_sign_out)
+        self.mail_goa = button("Open Online Accounts", "external", on_click=_open_online_accounts)
+        actions.addWidget(self.mail_signout)
+        actions.addWidget(self.mail_goa)
+        actions.addStretch(1)
+        mail_box.addLayout(actions)
         f.addRow("Mail", mail_box)
+        self.mail_source.currentIndexChanged.connect(self._mail_source_changed)
+        self._mail_source_changed()
         col.addWidget(c)
         self._sections["Integrations"] = c
         if _active is not None and _active.isRunning():
@@ -414,7 +422,7 @@ class SettingsPage(QWidget):
 
         for w in (self.name, self.aliases, self.eleven, self.router, self.folder, self.ms_client):
             w.textChanged.connect(self._changed)
-        for w in (self.model, self.vault, self.silence, self.remind, self.mail_count):
+        for w in (self.model, self.vault, self.silence, self.remind, self.mail_count, self.mail_source):
             w.currentIndexChanged.connect(self._changed)
         self.model.editTextChanged.connect(self._changed)
         for w in (*self.items.values(), self.login, *self.unignore.values(), self.mail_show):
@@ -490,6 +498,32 @@ class SettingsPage(QWidget):
                 colour = T["green"] if good else T["red"]
                 parts.append(f'<span style="color:{colour}">{"✓" if good else "✗"} {name}: {text}</span>')
         self.check_result.setText("<br>".join(parts))
+
+    def _mail_source_changed(self, *_) -> None:
+        from . import outlookweb
+        outlook = self.mail_source.currentData() == "outlook"
+        self.mail_count.setVisible(not outlook)
+        self.mail_signout.setVisible(outlook and outlookweb.available())
+        self.mail_goa.setVisible(not outlook)
+        if outlook:
+            text = ("Your Outlook inbox shows in the Mail pane on Home. Sign in there once, as in a "
+                    "browser: it works with any work account, and the sign-in is remembered."
+                    if outlookweb.available() else
+                    "Outlook on the web needs Qt's web view: reinstall Hear Me Out to get it.")
+        else:
+            who = mail.account_name()
+            text = (f"Using {who} from GNOME Online Accounts." if who else
+                    "Add an account in GNOME <b>Settings › Online Accounts › Microsoft 365</b>. On Ubuntu "
+                    "this only accepts personal Microsoft accounts, not work ones.")
+        self.mail_status.setText(text)
+
+    def _outlook_sign_out(self) -> None:
+        from . import outlookweb
+        outlookweb.sign_out()
+        view = getattr(self.w.window, "_outlook_view", None) if self.w else None
+        if view is not None:
+            view.load(QUrl(outlookweb.INBOX))
+        self.mail_status.setText("Signed out of Outlook. Sign in again in the Mail pane on Home.")
 
     # --- Microsoft 365
 
@@ -588,6 +622,7 @@ class SettingsPage(QWidget):
         s.remind_before = int(self.remind.currentData())
         s.mail_on_home = self.mail_show.isChecked()
         s.mail_count = int(self.mail_count.currentData())
+        s.mail_source = self.mail_source.currentData()
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:

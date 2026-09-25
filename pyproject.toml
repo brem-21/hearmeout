@@ -15,6 +15,7 @@ dependencies = [
     "numpy>=1.26",
     "soundfile>=0.12",
     "PySide6-Essentials>=6.6",
+    "PySide6-Addons>=6.6",  # Qt's web view, for Outlook on the web in Home's Mail pane
     "pulsectl>=24.0",
     "python-xlib>=0.33",
     "jeepney>=0.8",

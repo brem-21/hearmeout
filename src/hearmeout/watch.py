@@ -323,7 +323,8 @@ class Watcher(QObject):
         job.start()
 
     def refresh_mail(self) -> None:
-        if not self.s.mail_on_home or (self._mail_job and self._mail_job.isRunning()) or not mail.connected():
+        if (not self.s.mail_on_home or self.s.mail_source != "gnome"
+                or (self._mail_job and self._mail_job.isRunning()) or not mail.connected()):
             return
         job = self._mail_job = _MailRefresh()
         self.mail_error = ""
@@ -747,6 +748,8 @@ def run(show_window: bool, autostart: bool | None = None) -> int:
     if autostart is not None:
         set_autostart(autostart)
         print(f"Start at login {'on' if autostart else 'off'}.", file=sys.stderr)
+    from PySide6.QtCore import QCoreApplication, Qt
+    QCoreApplication.setAttribute(Qt.AA_ShareOpenGLContexts)  # needed before the app exists, for the Outlook pane
     app = QApplication.instance() or QApplication(sys.argv[:1])
     app.setApplicationName("hearmeout")
     app.setApplicationDisplayName("Hear Me Out")

@@ -133,20 +133,17 @@ press **Unpublish** in Outlook and **Disconnect** in Hear Me Out. If there's no
 The link is kept in `~/.config/hearmeout/config.toml` (only you can read it) and your
 next few days of events in `~/.local/share/hearmeout/calendar.json`.
 
-### Show your recent emails (optional)
+### Show your mail (optional)
 
-Hear Me Out reads your inbox through the work account you add to GNOME, so there's
-nothing to register in Azure:
+Home's Mail pane shows **Outlook on the web**, Microsoft's own web app, inside Hear Me
+Out. Sign in there once with your work account, as you would in a browser: it works
+with any Microsoft 365 account, with no IMAP, no Azure and no admin approval, and the
+sign-in is remembered (in `~/.local/share/hearmeout/web/`, readable only by you). Links
+in emails and attachments open in your normal browser. **Settings › Integrations ›
+Mail** can hide the pane or sign you out of Outlook.
 
-1. Open **Settings › Online Accounts › Microsoft 365** (or **Open Online Accounts** on
-   Home) and sign in with your work account.
-2. That's it: Home lists your newest emails within a few seconds, and checks for new
-   ones every 5 minutes.
-
-GNOME asks Microsoft for access on your behalf. If your organisation hasn't approved
-GNOME Online Accounts, Microsoft shows "Need admin approval"; ask IT to approve it.
-Choose how many emails to show, or hide them, in **Settings › Integrations › Mail**.
-The latest ones are kept in `~/.local/share/hearmeout/mail.json` (only you can read it).
+(There's also a compact list through GNOME **Settings › Online Accounts ›
+Microsoft 365**, but on Ubuntu that only accepts personal Microsoft accounts.)
 
 ## Use
 
@@ -165,9 +162,9 @@ a narrow window each pair stacks, one above the other.
   month: recordings and minutes of audio, sets of notes, tokens in / out and cost
   (by model). To see ElevenLabs credits, your key needs the **User: read**
   permission (ElevenLabs › API keys).
-- **Mail** (a pane beside the week; below it on a narrow window): your 5–10 newest emails (8 by default), unread first in bold, with
-  attachment and high-importance marks. Click one to read it in Outlook on the web.
-  See [Show your recent emails](#show-your-recent-emails-optional).
+- **Mail** (a pane beside the week; below it on a narrow window): your Outlook inbox,
+  with buttons to go back to the inbox, reload, or open Outlook in your browser.
+  See [Show your mail](#show-your-mail-optional).
 - **The week** shows the working days, Monday to Friday, with today highlighted. **‹ ›** move between
   weeks and **Today** comes back. Hover a meeting for who's invited. Click it to join
   the call (↗), or, for a meeting you recorded, to open its notes (◆ saved,

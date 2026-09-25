@@ -302,6 +302,8 @@ class MainWindow(QMainWindow):
         self.views.clear()
         self.bars.clear()
         self._home_widget = None  # its colours are the old theme's
+        if getattr(self, "_outlook_view", None) is not None:
+            self._outlook_view.setParent(None)  # keep Outlook (and its sign-in page) through the rebuild
         self.takeCentralWidget().deleteLater()
         self._build()
         self.search.setText(query)
@@ -768,6 +770,13 @@ class MainWindow(QMainWindow):
         parts.append(agenda.mail_key(self))
         parts.append(f"{self._home_wide()}:{self._pane_width()}")
         return "home|" + "|".join(parts) + f"|{self.w.mode}|{','.join(self.setup_missing())}"
+
+    def outlook_view(self):
+        """The Outlook web view for Home's Mail pane: made once, then moved into each new Home."""
+        if getattr(self, "_outlook_view", None) is None:
+            from . import outlookweb
+            self._outlook_view = outlookweb.make_view()
+        return self._outlook_view
 
     def _home_width(self) -> int:
         """How wide Home's column is in this window (it's centred, at most 1240 px)."""
