@@ -25,6 +25,10 @@ into your local Obsidian vault as plain Markdown.
 - **Headset or speakers.** Recording follows the mic and speaker your call app
   actually uses (USB or Bluetooth headset), even if you switch mid-call. On laptop
   speakers, the other side's voice picked up by your mic is filtered out.
+- **Knows your calendar.** Connect Microsoft 365 (Settings › Integrations) and a
+  recording is named after the Outlook or Teams meeting it belongs to. Invitees'
+  names help the transcript and the to-do owners, the invite's agenda helps the
+  summary, and Home shows what's coming up with a **Join** button.
 - **You choose what's saved.** After each meeting, a review window lets you pick
   any of: summary, my to-dos, team tasks, transcript, audio. Untick individual
   tasks, fix the title, pick the vault, then save.
@@ -78,7 +82,7 @@ Keys can also be given as environment variables (`ELEVENLABS_API_KEY`,
 **3. Check everything works**
 
 ```sh
-hearmeout doctor    # checks audio, your name, keys and vault
+hearmeout doctor    # checks audio, your name, keys, vault (and calendar, once connected)
 ```
 
 **4. Add it to your app menu**
@@ -109,6 +113,20 @@ Your meeting notes stay in your Obsidian vault. Settings are in
 `~/.config/hearmeout/` and unsaved recordings in `~/.local/share/hearmeout/`;
 delete those too to remove everything.
 
+### Connect your Outlook / Teams calendar (optional)
+
+**Settings › Integrations › Sign in with Microsoft**, then sign in with your work
+account in the browser and approve access. That's all. Hear Me Out asks only to read
+your calendar.
+
+If your organisation doesn't let people approve apps themselves, Microsoft shows
+"Need admin approval". Ask IT to approve **Hear Me Out**, or register your own
+(see [Your own Microsoft app registration](#your-own-microsoft-app-registration)).
+
+The sign-in is kept in `~/.config/hearmeout/microsoft.json` (only you can read it),
+your next few days of events in `~/.local/share/hearmeout/calendar.json`, and
+**Disconnect** deletes both.
+
 ## Use
 
 ### The app (recommended)
@@ -116,12 +134,12 @@ delete those too to remove everything.
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The app opens on **Home**: a greeting, **Record now**, a reminder if your name or
-keys are still missing, your recent meetings and all your open to-dos (tick them off
-right there). Esc or Alt+Home comes back to it.
+keys are still missing, your calendar's meetings coming up (with **Join** for Teams
+calls), your recent meetings and all your open to-dos (tick them off right there). Esc or Alt+Home comes back to it.
 
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
 your saved meetings by day; Settings (Ctrl+,) is at the bottom, with buttons to jump
-to each section (Appearance, You, Keys, Obsidian, Meetings). Leaving Settings with
+to each section (Appearance, You, Keys, Obsidian, Meetings, Integrations). Leaving Settings with
 unsaved changes asks whether to save or discard them. A **Light | Dark** switch in
 the sidebar sets the theme whatever your system uses (Settings › Appearance also has
 “Match system”). While recording, a banner shows the time, live **You / Others** levels
@@ -155,6 +173,14 @@ Other apps using the mic (voice recorders, OBS) are ignored. Settings › Meetin
 chose never to be asked about, and **Start at login**. On GNOME the tray icon needs the AppIndicator extension
 (on by default on Ubuntu).
 
+### With your calendar
+
+When your calendar is connected, a recording is matched to the event it overlaps
+(starting up to 15 minutes early). The note is named after the event, the summary
+gets a **From the invite** section (organiser, invitees, agenda, a link to Outlook),
+and the frontmatter lists who was `invited`. A one-on-one shows the other person's
+name in the transcript instead of "Them".
+
 ### From the terminal
 
 ```sh
@@ -184,6 +210,32 @@ Tested on a sample meeting:
 | `openai/gpt-4o-mini` | Not recommended: missed tasks assigned to other people |
 
 To keep everything local, point `base_url` at Ollama (`http://localhost:11434/v1`).
+
+## Your own Microsoft app registration
+
+Like Granola, Hear Me Out signs in to Microsoft 365 through one app registration
+of its own. Its ID is `BUILT_IN_CLIENT_ID` in `src/hearmeout/outlook.py`. To create
+it (maintainers), or to use your organisation's own:
+
+1. [portal.azure.com](https://portal.azure.com) › **Microsoft Entra ID** ›
+   **App registrations** › **New registration**
+   - Name: `Hear Me Out`
+   - Supported account types: **Accounts in any organizational directory (Multitenant)**
+     (for your organisation's own: *this organizational directory only*)
+   - Redirect URI: platform **Public client/native (mobile & desktop)**, `http://localhost`
+2. **API permissions** › Add › Microsoft Graph › Delegated › **Calendars.Read**
+   (User.Read is already there).
+3. Copy the **Application (client) ID**. There's no client secret: it's a desktop app.
+4. Maintainers: put it in `BUILT_IN_CLIENT_ID`. Adding publisher verification
+   (**Branding & properties**) lets people in most organisations approve it without IT.
+   For your organisation's own: **Settings › Integrations › Use my own app registration**,
+   or in `config.toml`:
+
+   ```toml
+   [microsoft]
+   client_id = "1a2b3c4d-…"
+   tenant = "your-tenant-id"   # needed for a single-organisation registration
+   ```
 
 ## Development
 

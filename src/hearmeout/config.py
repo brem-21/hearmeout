@@ -57,6 +57,10 @@ class Settings:
 
     appearance: str = "system"  # "system", "light" or "dark"
 
+    # Microsoft 365 integration (Outlook calendar, Teams meetings): your app registration's client ID.
+    ms_client_id: str = ""
+    ms_tenant: str = "organizations"  # or your organisation's tenant ID / domain
+
 
 # env var -> (settings attribute, converter)
 _ENV = {
@@ -67,6 +71,7 @@ _ENV = {
     "HEARMEOUT_MODEL": ("llm_model", str),
     "HEARMEOUT_USER_NAME": ("user_name", str),
     "HEARMEOUT_VAULT": ("vault", str),
+    "HEARMEOUT_MS_CLIENT_ID": ("ms_client_id", str),
 }
 
 # config.toml [section] key -> settings attribute
@@ -88,6 +93,8 @@ _TOML = {
     ("detect", "stop_after"): "stop_after",
     ("detect", "stop_after_silence"): "silence_stop",
     ("app", "appearance"): "appearance",
+    ("microsoft", "client_id"): "ms_client_id",
+    ("microsoft", "tenant"): "ms_tenant",
 }
 
 
@@ -156,6 +163,11 @@ stop_after_silence = 120   # stop when nobody has spoken for this long (seconds;
 
 [app]
 appearance = "system"   # "system", "light" or "dark"
+
+[microsoft]
+# Outlook calendar and Teams meetings: sign in from Settings › Integrations.
+client_id = ""     # your app registration's application (client) ID (see the README)
+tenant = "organizations"
 """
         )
         CONFIG_FILE.chmod(0o600)

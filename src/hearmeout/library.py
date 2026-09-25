@@ -173,6 +173,7 @@ class PendingRecording:
     started: datetime
     duration_s: float
     people: list[str] = field(default_factory=list)
+    event_title: str | None = None  # the calendar event it was matched to
 
     @property
     def key(self) -> str:
@@ -184,6 +185,8 @@ class PendingRecording:
 
     @property
     def title(self) -> str:
+        if self.event_title:
+            return self.event_title
         if self.title_hint:
             return self.title_hint
         try:
@@ -216,7 +219,7 @@ def pending_recordings() -> list[PendingRecording]:
         except ValueError:
             continue
         out.append(PendingRecording(session, info.get("app"), info.get("title_hint"), started, duration,
-                                    info.get("people") or []))
+                                    info.get("people") or [], (info.get("event") or {}).get("subject")))
     return out
 
 

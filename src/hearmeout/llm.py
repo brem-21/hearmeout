@@ -75,7 +75,7 @@ def _strict(schema):
 
 def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: str = "Me",
               names: list[str] | None = None, day: date | None = None,
-              others: list[str] | None = None) -> MeetingNotes:
+              others: list[str] | None = None, event=None) -> MeetingNotes:
     day = day or date.today()
     names_text = ", ".join(f'"{n}"' for n in (names or []) if n) or "(name unknown)"
     messages = [
@@ -83,7 +83,7 @@ def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: s
             me=me, names=names_text, day=day.isoformat(), weekday=day.strftime("%A"),
             hint=(f"\n- The call window says the other side is: {', '.join(others)}. "
                   "Use these names for 'Them' unless the transcript clearly says otherwise." if others else ""))},
-        {"role": "user", "content": f"Transcript:\n\n{transcript}"},
+        {"role": "user", "content": _invite(event) + f"Transcript:\n\n{transcript}"},
     ]
     schema = _strict(MeetingNotes.model_json_schema())
     payload = {
@@ -111,6 +111,22 @@ def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: s
                 messages += [{"role": "assistant", "content": content},
                              {"role": "user", "content": f"That did not match the schema:\n{e}\nReply with corrected JSON only."}]
     raise AssertionError("unreachable")
+
+
+def _invite(event) -> str:
+    """The calendar invite (an outlook.Event), as context before the transcript."""
+    if event is None:
+        return ""
+    lines = ["Calendar invite for this meeting (context only: people invited may not have attended, "
+             "and the agenda may not have been followed; only report what the transcript shows):",
+             f"- Title: {event.subject}"]
+    if event.organizer:
+        lines.append(f"- Organiser: {event.organizer}")
+    if event.attendees:
+        lines.append(f"- Invited: {', '.join(event.attendees)} (use these spellings for their names)")
+    if event.agenda:
+        lines += ["- Agenda / description:", *[f"  {l}" for l in event.agenda.splitlines()]]
+    return "\n".join(lines) + "\n\n"
 
 
 def _fix_owners(notes: MeetingNotes, my_names: list[str]) -> MeetingNotes:

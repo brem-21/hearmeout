@@ -1,5 +1,5 @@
 """The Settings page inside the app: your name, keys, model, vault, meeting
-detection and appearance. Changes are saved with the Save button."""
+detection, integrations and appearance. Changes are saved with the Save button."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from . import config, obsidian, theme
+from . import config, obsidian, outlook, theme
 from .obsidian import ITEMS
 from .theme import T
 from .views import button, card, icon_label, label
@@ -56,6 +56,40 @@ class _KeyCheck(QThread):
                 self.done.emit("router", False, "Missing")
         except httpx.HTTPError as e:
             self.done.emit("router", False, f"Couldn't reach the model service ({e.__class__.__name__})")
+
+
+class _SignIn(QThread):
+    done = Signal(bool, str)  # ok, account name or error
+
+    def __init__(self, client_id: str, tenant: str):
+        super().__init__()
+        self.client_id, self.tenant = client_id, tenant
+        self.flow: outlook.SignIn | None = None
+
+    def run(self) -> None:
+        try:
+            self.flow = outlook.SignIn(self.client_id, self.tenant)
+            name = self.flow.run()
+            outlook.refresh()
+            self.done.emit(True, name)
+        except Exception as e:
+            self.done.emit(False, str(e))
+
+    def cancel(self) -> None:
+        if self.flow:
+            self.flow.cancel()
+
+
+# The sign-in in progress. Kept here, not on the page, because the page is rebuilt
+# (e.g. on a theme change) while you're still in the browser.
+_active: _SignIn | None = None
+
+
+def cancel_sign_in() -> None:
+    """Stop waiting for the browser (when the app quits)."""
+    if _active is not None and _active.isRunning():
+        _active.cancel()
+        _active.wait(2000)
 
 
 def _section(title: str, icon: str, subtitle: str = "") -> tuple[QWidget, QFormLayout]:
@@ -250,6 +284,44 @@ class SettingsPage(QWidget):
             f.addRow("Apps", box)
         col.addWidget(c)
         self._sections["Meetings"] = c
+
+        # --- integrations
+        c, f = _section("Integrations", "calendar",
+                        "Connect your calendar so recordings are named after the meeting, know who was "
+                        "invited and use the agenda. Your upcoming meetings show on Home.")
+        ms = QVBoxLayout()
+        ms.setSpacing(8)
+        head = QHBoxLayout()
+        head.setSpacing(8)
+        name = label("Microsoft 365")
+        name.setStyleSheet("font-weight: 600;")
+        head.addWidget(name)
+        head.addWidget(label("Outlook calendar and Teams meetings", "muted"))
+        head.addStretch(1)
+        ms.addLayout(head)
+        self.ms_status = label("", "muted", wrap=True)
+        ms.addWidget(self.ms_status)
+        self.ms_client = QLineEdit(self.s.ms_client_id)
+        self.ms_client.setPlaceholderText("Application (client) ID, e.g. 1a2b3c4d-…")
+        self.ms_client.setToolTip("From your organisation's app registration in the Azure portal (see the README)")
+        ms.addWidget(self.ms_client)
+        # Most people use Hear Me Out's own registration and never see this field.
+        self._own_app = bool(self.s.ms_client_id or not outlook.BUILT_IN_CLIENT_ID)
+        self.ms_own = button("Use my own app registration…", variant="ghost", on_click=self._ms_show_own)
+        buttons = QHBoxLayout()
+        self.ms_connect = button("Sign in with Microsoft", "external", "primary", on_click=self._ms_sign_in)
+        self.ms_cancel = button("Cancel", on_click=self._ms_cancel)
+        self.ms_disconnect = button("Disconnect", "x", on_click=self._ms_sign_out)
+        for b in (self.ms_connect, self.ms_cancel, self.ms_disconnect, self.ms_own):
+            buttons.addWidget(b)
+        buttons.addStretch(1)
+        ms.addLayout(buttons)
+        f.addRow(ms)
+        col.addWidget(c)
+        self._sections["Integrations"] = c
+        if _active is not None and _active.isRunning():
+            _active.done.connect(self._ms_done)
+        self._ms_refresh()
         col.addStretch(1)
 
         scroll = QScrollArea()
@@ -257,7 +329,8 @@ class SettingsPage(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setWidget(body)
         self._scroll = scroll
-        icons = {"Appearance": "sun", "You": "users", "Keys": "key", "Obsidian": "gem", "Meetings": "mic"}
+        icons = {"Appearance": "sun", "You": "users", "Keys": "key", "Obsidian": "gem", "Meetings": "mic",
+                 "Integrations": "calendar"}
         for name in self._sections:
             b = QPushButton(name)
             b.setProperty("variant", "chip")
@@ -284,7 +357,7 @@ class SettingsPage(QWidget):
         lay.addWidget(scroll, 1)
         lay.addWidget(foot_w)
 
-        for w in (self.name, self.aliases, self.eleven, self.router, self.folder):
+        for w in (self.name, self.aliases, self.eleven, self.router, self.folder, self.ms_client):
             w.textChanged.connect(self._changed)
         for w in (self.model, self.vault, self.silence):
             w.currentIndexChanged.connect(self._changed)
@@ -363,6 +436,70 @@ class SettingsPage(QWidget):
                 parts.append(f'<span style="color:{colour}">{"✓" if good else "✗"} {name}: {text}</span>')
         self.check_result.setText("<br>".join(parts))
 
+    # --- Microsoft 365
+
+    def _ms_refresh(self, message: str = "", ok: bool | None = None) -> None:
+        busy = _active is not None and _active.isRunning()
+        on = outlook.connected()
+        if message:
+            text = message
+        elif busy:
+            text = "Finish signing in in your browser…"
+        elif on:
+            err = getattr(self.w, "calendar_error", "") if self.w else ""
+            text = f"Connected as {outlook.account() or 'your Microsoft account'}." + (f" Last sync failed: {err}"
+                                                                                        if err else "")
+            ok = not err
+        else:
+            text = "Not connected."
+        colour = T["green"] if ok else T["red"] if ok is False else T["muted"]
+        self.ms_status.setText(text)
+        self.ms_status.setStyleSheet(f"color: {colour};")
+        self.ms_client.setVisible(not on and self._own_app)
+        self.ms_own.setVisible(not on and not busy and not self._own_app)
+        self.ms_connect.setVisible(not on and not busy)
+        self.ms_cancel.setVisible(busy)
+        self.ms_disconnect.setVisible(on and not busy)
+
+    def _ms_show_own(self) -> None:
+        self._own_app = True
+        self._ms_refresh()
+        self.ms_client.setFocus()
+
+    def _ms_sign_in(self) -> None:
+        global _active
+        own = self.ms_client.text().strip()
+        client_id = own or outlook.BUILT_IN_CLIENT_ID
+        if not client_id:
+            self._ms_refresh("Paste an application (client) ID first. The README shows how to get one.", False)
+            return
+        s = config.load()
+        if own != s.ms_client_id:  # keep your own ID even if the rest of the page isn't saved
+            s.ms_client_id = own
+            config.save(s)
+        _active = _SignIn(client_id, s.ms_tenant)
+        _active.done.connect(self._ms_done)
+        _active.start()
+        self._ms_refresh()
+
+    def _ms_cancel(self) -> None:
+        if _active is not None:
+            _active.cancel()
+
+    def _ms_done(self, ok: bool, text: str) -> None:
+        if ok:
+            self._ms_refresh(f"Connected as {text}.", True)
+            if self.w is not None:
+                self.w.changed.emit()
+        else:
+            self._ms_refresh(text, False)
+
+    def _ms_sign_out(self) -> None:
+        outlook.sign_out()
+        self._ms_refresh("Disconnected. Your meeting notes aren't affected.")
+        if self.w is not None:
+            self.w.changed.emit()
+
     # --- actions
 
     def save(self) -> None:
@@ -379,6 +516,7 @@ class SettingsPage(QWidget):
         mode = next(b.property("mode") for b in self.mode.buttons() if b.isChecked())
         s.detect = mode
         s.appearance = theme.MODE
+        s.ms_client_id = self.ms_client.text().strip() or s.ms_client_id
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:

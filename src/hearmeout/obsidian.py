@@ -88,6 +88,7 @@ class Meeting:
     notes: MeetingNotes | None = None
     audio: Path | None = None
     me: str = "Me"  # the speaker label used for the user's own microphone
+    event: object | None = None  # the outlook.Event it was scheduled as, if the calendar is connected
     # Tasks the user unticked in the review screen are left out of the saved notes.
     excluded_tasks: set[int] = field(default_factory=set)
 
@@ -200,6 +201,8 @@ def _frontmatter(m: Meeting, kind: str) -> list[str]:
         f'time: "{m.started:%H:%M}"',
         f"duration_minutes: {max(1, round(m.duration_s / 60))}",
         f"participants: [{', '.join(json.dumps(p, ensure_ascii=False) for p in participants)}]",
+        *([f"invited: [{', '.join(json.dumps(p, ensure_ascii=False) for p in m.event.attendees)}]"]
+          if m.event and m.event.attendees else []),
         f"tags: [meeting, meeting/{kind}]",
         f"meeting: {json.dumps(m.title, ensure_ascii=False)}",
         "source: hearmeout",
@@ -232,7 +235,31 @@ def _render_summary(m: Meeting, others: list[str]) -> str:
         body += ["## Decisions", "", *[f"- {d}" for d in n.decisions], ""]
     if n.key_points:
         body += ["## Key points", "", *[f"- {p}" for p in n.key_points], ""]
+    body += _invite_lines(m.event)
     return "\n".join(body + _see_also(others))
+
+
+def invite_markdown(event) -> str:
+    return "\n".join(_invite_lines(event))
+
+
+def _invite_lines(e) -> list[str]:
+    """The calendar invite: when, who and the agenda, with a link back to Outlook."""
+    if e is None:
+        return []
+    when = f"{e.start:%H:%M}–{e.end:%H:%M}"
+    lines = ["## From the invite", "", f"- **Scheduled:** {e.subject}, {when}"]
+    if e.organizer:
+        lines.append(f"- **Organiser:** {e.organizer}")
+    if e.attendees:
+        lines.append(f"- **Invited:** {', '.join(e.attendees)}")
+    if e.location and not e.location.lower().startswith("microsoft teams"):
+        lines.append(f"- **Where:** {e.location}")
+    if e.web_link:
+        lines.append(f"- [Open in Outlook]({e.web_link})")
+    if e.agenda:
+        lines += ["", "**Agenda**", "", *[f"> {l}" if l else ">" for l in e.agenda.splitlines()]]
+    return lines + [""]
 
 
 def _render_my_todos(m: Meeting, others: list[str]) -> str:

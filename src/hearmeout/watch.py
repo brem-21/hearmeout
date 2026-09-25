@@ -13,6 +13,7 @@ import shlex
 import shutil
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import QFile, QLockFile, QObject, QThread, QTimer, Signal
@@ -20,7 +21,7 @@ from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import audio, config, detect, notify, obsidian, pipeline
+from . import audio, config, detect, notify, obsidian, outlook, pipeline
 
 STATE_FILE = config.DATA_DIR / "watch-state.json"
 AUTOSTART_FILE = config.CONFIG_DIR.parent / "autostart" / f"{notify.DESKTOP_ENTRY}.desktop"
@@ -29,6 +30,7 @@ SOCKET_NAME = f"hearmeout-{os.getuid()}"
 SILENCE_WARNING = 30  # warn this many seconds before a silence stop
 POLL_MS = 2000
 CONFIRM_POLLS = 2  # a call must be seen twice in a row (about 2-4 s) before we ask
+CALENDAR_MS = 10 * 60 * 1000  # how often to re-read the calendar
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -148,6 +150,17 @@ class _Processor(QThread):
             self.failed.emit(str(e))
 
 
+class _CalendarRefresh(QThread):
+    """Re-reads the calendar off the UI thread."""
+    failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            outlook.refresh()
+        except Exception as e:  # offline, signed out…: Home keeps showing the last copy
+            self.failed.emit(str(e))
+
+
 # --------------------------------------------------------------------------- the app
 
 
@@ -195,7 +208,26 @@ class Watcher(QObject):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.tick)
         self.timer.start(POLL_MS)
+        self.calendar_error = ""
+        self._cal_job: _CalendarRefresh | None = None
+        self.cal_timer = QTimer(self)
+        self.cal_timer.timeout.connect(self.refresh_calendar)
+        self.cal_timer.start(CALENDAR_MS)
+        QTimer.singleShot(1500, self.refresh_calendar)
         self._update_tray()
+
+    def refresh_calendar(self) -> None:
+        if not outlook.connected() or (self._cal_job and self._cal_job.isRunning()):
+            return
+        job = self._cal_job = _CalendarRefresh()
+
+        def failed(err: str) -> None:
+            self.calendar_error = err
+
+        self.calendar_error = ""
+        job.failed.connect(failed)
+        job.finished.connect(self.changed.emit)
+        job.start()
 
     # ------------------------------------------------------------------ detection loop
 
@@ -313,9 +345,14 @@ class Watcher(QObject):
             self.notifier.close(self.ask_id)
             self.asked, self.ask_id = None, 0
         self.s = config.load()  # pick up any config edits
+        try:  # from the calendar already fetched, so starting never waits on the network
+            event = outlook.event_for(datetime.now(), call.title_hint if call else None,
+                                      call.app if call else None, network=False)
+        except Exception:
+            event = None
         self.session = pipeline.new_session(app=call.app if call else None,
                                             title_hint=call.title_hint if call else None,
-                                            people=list(call.people) if call else None)
+                                            people=list(call.people) if call else None, event=event)
         self.recorder = audio.Recorder(self.session)
         try:
             self.recorder.start(call.mic if call else None, call.speaker if call else None)
@@ -506,6 +543,10 @@ class Watcher(QObject):
             self.recorder = None
         for job in list(self.jobs.values()):
             job.wait()
+        from .settings import cancel_sign_in
+        cancel_sign_in()
+        if self._cal_job is not None:
+            self._cal_job.wait(5000)
         if self.window is not None:
             self.window.player.stop()
             for bar in self.window.bars.values():  # let a save to Obsidian finish

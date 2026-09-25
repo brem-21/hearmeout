@@ -244,7 +244,9 @@ def from_meeting(meeting: obsidian.Meeting, app: str | None = None) -> MeetingDa
                         excluded=i in meeting.excluded_tasks)
         (my if a.owner_is_me else team).append(item)
     return MeetingData("pending", meeting.title, meeting.started, meeting.duration_s,
-                       notes.participants if notes else [], app, _summary_md(notes) if notes else "",
+                       notes.participants if notes else [], app,
+                       (_summary_md(notes) + ("\n\n" + obsidian.invite_markdown(meeting.event) if meeting.event else ""))
+                       if notes else "",
                        my, team, rows, meeting.audio, meeting, has_notes=notes is not None)
 
 

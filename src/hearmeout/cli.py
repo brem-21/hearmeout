@@ -19,7 +19,7 @@ import time
 from pathlib import Path
 
 import httpx
-from . import __version__, audio, config, obsidian, pipeline, tui
+from . import __version__, audio, config, obsidian, outlook, pipeline, tui
 
 def _say(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
@@ -169,6 +169,13 @@ def cmd_doctor(args) -> int:
               else f"HTTP {r.status_code}")
     else:
         check("Model API key", False, "missing")
+
+    if outlook.connected():  # optional, so only checked once you've signed in
+        try:
+            n = len(outlook.refresh())
+            check("Microsoft calendar", True, f"{outlook.account()} ({n} events in the next few days)")
+        except Exception as e:
+            check("Microsoft calendar", False, str(e))
     return 0 if ok else 1
 
 

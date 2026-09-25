@@ -8,7 +8,7 @@ Main area: the selected meeting (summary, to-dos, team tasks, transcript), with 
 from __future__ import annotations
 
 import time
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 import soundfile as sf
@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from . import library, obsidian, theme
+from . import library, obsidian, outlook, theme
 from .gui import _load_choices, _save_choices
 from .player import Player
 from .settings import SettingsPage
@@ -700,7 +700,51 @@ class MainWindow(QMainWindow):
     def _home_key(self) -> str:
         parts = [f"{getattr(o, 'key', '')}:{self._badge_for(o)[0]}:{o.title}" for o in self._recent()]
         parts += [f"{t.file}:{t.line}" for _, t in self._open_todos()]
+        now = datetime.now()
+        parts += [f"{e.id}:{e.subject}:{e.start}:{e.start <= now}" for e in self._upcoming()]
         return "home|" + "|".join(parts) + f"|{self.w.mode}|{','.join(self.setup_missing())}"
+
+    def _upcoming(self) -> list[outlook.Event]:
+        return outlook.upcoming() if outlook.connected() else []
+
+    def _coming_up(self, col: QVBoxLayout) -> None:
+        """Today's and tomorrow's meetings from your calendar, with a Join button."""
+        if not outlook.connected():
+            return
+        events = self._upcoming()
+        col.addSpacing(6)
+        col.addWidget(label("Coming up", "h2"))
+        if not events:
+            col.addWidget(label("Nothing else in your calendar today or tomorrow.", "muted"))
+            return
+        now, today = datetime.now(), date.today()
+        me = [self.w.s.user_name, *self.w.s.user_aliases]
+        for e in events:
+            c = card()
+            lay = QHBoxLayout(c)
+            lay.setContentsMargins(16, 10, 14, 10)
+            lay.setSpacing(12)
+            live = e.start <= now
+            lay.addWidget(icon_label("calendar", T["red"] if live else T["accent"], 18))
+            t = QVBoxLayout()
+            t.setSpacing(2)
+            title = ElidedLabel(e.subject)
+            f = title.font()
+            f.setWeight(f.Weight.DemiBold)
+            title.setFont(f)
+            t.addWidget(title)
+            day = "" if e.start.date() == today else "Tomorrow " if (e.start.date() - today).days == 1 \
+                else f"{e.start:%a} "
+            others = e.others(me)
+            who = (", ".join(others[:3]) + (f" +{len(others) - 3}" if len(others) > 3 else "")) if others else ""
+            t.addWidget(ElidedLabel(" · ".join(x for x in (f"{day}{e.start:%H:%M}–{e.end:%H:%M}", who) if x), "muted"))
+            lay.addLayout(t, 1)
+            if live:
+                lay.addWidget(badge("Now", "bad"))
+            if e.join_url:
+                lay.addWidget(button("Join", "external", "primary" if live else None, tip=e.join_url,
+                                     on_click=lambda _=False, u=e.join_url: QDesktopServices.openUrl(QUrl(u))))
+            col.addWidget(c)
 
     def _home_page(self) -> QWidget:
         page = QWidget()
@@ -783,6 +827,8 @@ class MainWindow(QMainWindow):
         tile("On" if watching else "Off", "watching for meetings" if watching else "meeting detection",
              "wave", T["green"] if watching else T["faint"], self.open_settings, "Change in Settings")
         col.addLayout(tiles)
+
+        self._coming_up(col)
 
         # recent meetings
         recent = self._recent()

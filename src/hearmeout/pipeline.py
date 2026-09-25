@@ -15,18 +15,48 @@ from typing import Callable
 
 import soundfile as sf
 
-from . import config, detect, llm, obsidian, stt
+from . import config, detect, llm, obsidian, outlook, stt
 
 SESSION_FMT = "%Y-%m-%d_%H-%M-%S"
 
 
-def new_session(app: str | None = None, title_hint: str | None = None, people: list[str] | None = None) -> Path:
+def new_session(app: str | None = None, title_hint: str | None = None, people: list[str] | None = None,
+                event: outlook.Event | None = None) -> Path:
     """Create a session folder for a new recording, remembering where it came from."""
     path = config.DATA_DIR / "recordings" / datetime.now().strftime(SESSION_FMT)
     path.mkdir(parents=True, exist_ok=True)
-    (path / "session.json").write_text(json.dumps({"app": app, "title_hint": title_hint,
-                                                   "people": list(people or [])}))
+    info = {"app": app, "title_hint": title_hint, "people": list(people or [])}
+    if event:
+        info["event"] = event.to_dict()
+    (path / "session.json").write_text(json.dumps(info))
     return path
+
+
+def _remember(session: Path, **changes) -> None:
+    try:
+        info = json.loads((session / "session.json").read_text())
+    except (OSError, ValueError):
+        info = {}
+    (session / "session.json").write_text(json.dumps({**info, **changes}))
+
+
+def calendar_event(session: Path, started: datetime, info: dict,
+                   status: Callable[[str], None] = lambda msg: None) -> outlook.Event | None:
+    """The calendar event this recording belongs to (looked up once, then kept with the recording).
+    A calendar problem never stops notes from being made."""
+    if info.get("event"):
+        return outlook.Event.from_dict(info["event"])
+    if info.get("event_checked") or not outlook.connected():
+        return None
+    try:
+        event = outlook.event_for(started, info.get("title_hint"), info.get("app"))
+    except Exception as e:  # offline, signed out…
+        status(f"Couldn't check your calendar ({e}).")
+        return None
+    _remember(session, event=event.to_dict() if event else None, event_checked=True)
+    if event:
+        status(f"Matched to “{event.subject}” in your calendar.")
+    return event
 
 
 def session_info(session: Path) -> dict:
@@ -106,6 +136,10 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
     info = session_info(work)
     people = info.get("people") or []
     me = s.user_name or "Me"
+    event = calendar_event(work, started, info, status)
+    invited = event.others([s.user_name, *s.user_aliases]) if event else []
+    if not people and len(invited) == 1:
+        people = invited  # a one-on-one in the calendar
 
     # 1. Transcript
     cached = work / "transcript.json"
@@ -115,7 +149,8 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
         if not s.elevenlabs_api_key:
             raise RuntimeError("Missing ElevenLabs API key: set ELEVENLABS_API_KEY or [stt] api_key in config.toml")
         status(f"Transcribing with ElevenLabs {s.stt_model}…")
-        keyterms = [t for t in [s.user_name, *s.user_aliases, *s.keyterms] if t]
+        keyterms = [t for t in [s.user_name, *s.user_aliases, *s.keyterms, *invited] if t]
+        keyterms = list(dict.fromkeys(keyterms))[:50]  # attendees' names help transcription
         utterances = stt.transcribe(audio_file, s.elevenlabs_api_key, s.stt_model, language=s.language,
                                     keyterms=keyterms, me=me, two_track=two_track)
         stt.save(utterances, cached)
@@ -132,7 +167,7 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
         status(f"Writing notes with {s.llm_model}…")
         notes = llm.summarize(stt.as_text(utterances), api_key=s.openrouter_api_key, base_url=s.llm_base_url,
                               model=s.llm_model, me=me, names=[s.user_name, *s.user_aliases],
-                              day=started.date(), others=people)
+                              day=started.date(), others=people, event=event)
         cached_notes.write_text(llm.notes_to_json(notes))
     else:
         status("No model API key (OPENROUTER_API_KEY), so only the transcript can be saved.")
@@ -148,9 +183,10 @@ def _prepare(path: Path, s: config.Settings, *, title: str | None,
     elif notes and people:
         notes.participants += [p for p in people if p not in notes.participants]
 
-    title = title or info.get("title_hint") or (notes.title if notes else None) or f"Meeting {started:%H:%M}"
+    title = (title or (event.subject if event else None) or info.get("title_hint")
+             or (notes.title if notes else None) or f"Meeting {started:%H:%M}")
     meeting = obsidian.Meeting(title=title, started=started, duration_s=duration or utterances[-1].end,
-                               utterances=utterances, notes=notes, audio=audio_file, me=me)
+                               utterances=utterances, notes=notes, audio=audio_file, me=me, event=event)
     return meeting, work
 
 
