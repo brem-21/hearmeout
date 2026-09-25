@@ -166,7 +166,7 @@ appearance = "system"   # "system", "light" or "dark"
 
 [microsoft]
 # Outlook calendar and Teams meetings: sign in from Settings › Integrations.
-client_id = ""     # your app registration's application (client) ID (see the README)
+client_id = ""     # empty = Hear Me Out's own; or your organisation's app (client) ID
 tenant = "organizations"
 """
         )
