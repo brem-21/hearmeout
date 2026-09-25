@@ -95,6 +95,9 @@ _ICONS = {
     "home": '<path d="M4 11l8-6.5 8 6.5"/><path d="M6 9.5V19.5h4.5V15h3v4.5H18V9.5"/>',
     "chevron": '<path d="M9.5 6l6 6-6 6"/>',
     "chevron-left": '<path d="M14.5 6l-6 6 6 6"/>',
+    "mail": '<rect x="3.5" y="5.5" width="17" height="13" rx="2"/><path d="M4 7l8 6 8-6"/>',
+    "clip": '<path d="M15.5 7.5l-6.3 6.3a1.8 1.8 0 0 0 2.5 2.5l6.6-6.6a3.5 3.5 0 0 0-5-5l-6.8 6.8a5.2 5.2 0 0 0 7.4 7.4l5.4-5.4"/>',
+    "gauge": '<path d="M4.5 17a8 8 0 1 1 15 0"/><path d="M12 13l3.5-4"/><circle cx="12" cy="13.5" r="1.3" fill="C"/>',
     "sun": '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4'
            'M2.5 12h2M19.5 12h2M4.6 19.4L6 18M18 6l1.4-1.4"/>',
     "moon": '<path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/>',
@@ -228,6 +231,8 @@ QLabel[evtime="live"] {{ color: {t['red']}; }}
 QLabel[evtime="over"] {{ color: {t['faint']}; }}
 QLabel[evtitle] {{ font-size: 12px; color: {t['text']}; }}
 QLabel[evtitle="dim"] {{ color: {t['faint']}; }}
+QFrame[mailrow="true"] {{ border-radius: 8px; background: transparent; }}
+QFrame[mailrow="true"]:hover {{ background: {t['hover']}; }}
 QWidget#today {{ background: {t['accent_soft']}; border-radius: 8px; }}
 QPushButton[variant="seg-left"], QPushButton[variant="seg-right"] {{ background: {t['surface']};
     border: 1px solid {t['border_strong']}; padding: 6px 10px; color: {t['muted']}; font-weight: 600; }}

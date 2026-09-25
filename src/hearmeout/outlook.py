@@ -539,11 +539,34 @@ def starting_soon(minutes: int, now: datetime | None = None) -> list[Event]:
     return [e for e in events if not e.all_day and now < e.start <= now + timedelta(minutes=minutes)]
 
 
-def match(events: list[Event], when: datetime, hint: str | None = None, app: str | None = None) -> Event | None:
+_SERVICES = ("teams", "zoom", "meet", "slack", "discord", "webex", "skype", "whatsapp", "telegram", "signal",
+             "element", "jitsi", "whereby")
+
+
+def _service(text: str) -> str | None:
+    text = (text or "").lower().replace("meet.google", "meet").replace("google meet", "meet")
+    return next((s for s in _SERVICES if s in text), None)
+
+
+def fits(e: Event, app: str | None = None, people: list[str] | None = None) -> bool:
+    """Whether a call could be this event: the same call service (a Slack call isn't the Teams
+    meeting at that time), and, when the call window names who it's with, one of the invitees."""
+    call, booked = _service(app or ""), _service(f"{e.join_url} {e.location}")
+    if call and booked and call != booked:
+        return False
+    if people and e.attendees:
+        firsts = {a.split()[0].lower() for a in e.attendees if a.split()}
+        if not any(p.split()[0].lower() in firsts for p in people if p.split()):
+            return False
+    return True
+
+
+def match(events: list[Event], when: datetime, hint: str | None = None, app: str | None = None,
+          people: list[str] | None = None) -> Event | None:
     """The calendar event a recording started at `when` belongs to, if any."""
     best, best_score = None, float("-inf")
     for e in events:
-        if e.all_day or not (e.start - EARLY <= when < e.end):
+        if e.all_day or not (e.start - EARLY <= when < e.end) or not fits(e, app, people):
             continue
         score = -abs((when - e.start).total_seconds()) / 1800  # the closest start wins…
         if hint:
@@ -558,16 +581,16 @@ def match(events: list[Event], when: datetime, hint: str | None = None, app: str
 
 
 def event_for(when: datetime, hint: str | None = None, app: str | None = None, *,
-              network: bool = True) -> Event | None:
+              network: bool = True, people: list[str] | None = None) -> Event | None:
     """Find the event for a recording, from the cache when it covers that time, else from Graph."""
     if not connected():
         return None
     events, start, end = cached()
     if start and end and start <= when - EARLY and when + EARLY <= end:
-        found = match(events, when, hint, app)
+        found = match(events, when, hint, app, people)
         if found or not network:
             return found
     if not network:
         return None
     return match(fetch((when - timedelta(hours=12)).astimezone(), (when + timedelta(hours=2)).astimezone()),
-                 when, hint, app)
+                 when, hint, app, people)

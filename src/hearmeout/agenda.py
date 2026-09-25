@@ -1,5 +1,5 @@
-"""Home's week calendar (browse weeks, join, see which meetings you recorded) and the
-To-dos page (every to-do from your saved meetings, by due date or by meeting)."""
+"""Home's week calendar (browse weeks, join, see which meetings you recorded), Home's recent
+emails, and the To-dos page (every to-do from your saved meetings, by due date or by meeting)."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import QObject, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QCheckBox, QHBoxLayout, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QBoxLayout, QCheckBox, QHBoxLayout, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
-from . import library, outlook, theme
+from . import config, library, mail, outlook, theme
 from .theme import T
 from .views import ClickableCard, ElidedLabel, button, card, chip, friendly_due, icon_label, label
 
@@ -100,8 +100,10 @@ def assign(events: list[outlook.Event], meetings: list) -> dict[tuple, object]:
     out: dict[tuple, object] = {}
     timed = [e for e in events if not e.all_day]
     for m in sorted(meetings, key=lambda m: m.started):
-        running = [e for e in timed if e.start <= m.started < e.end]
-        soon = [e for e in timed if m.started < e.start <= m.started + EARLY]
+        app, people = getattr(m, "app", None), getattr(m, "people", None)
+        ok = [e for e in timed if outlook.fits(e, app, people)]
+        running = [e for e in ok if e.start <= m.started < e.end]
+        soon = [e for e in ok if m.started < e.start <= m.started + EARLY]
         same = [e for e in running + soon if e.subject.strip().lower() == m.title.strip().lower()]
         best = (same[0] if same else max(running, key=lambda e: e.start) if running
                 else min(soon, key=lambda e: e.start) if soon else None)
@@ -259,6 +261,184 @@ def _event_box(win, e: outlook.Event, now: datetime, me: list[str], notes) -> QW
 
 def _open(url: str) -> None:
     QDesktopServices.openUrl(QUrl(url))
+
+
+# --------------------------------------------------------------------------- mail
+
+
+def mail_key(win) -> str:
+    s = win.w.s
+    if not s.mail_on_home:
+        return "mail:off"
+    messages, fetched = mail.cached()
+    return (f"mail:{mail.connected()}:{fetched}:{win.w.mail_error}:{s.mail_count}:{date.today()}:"
+            + ",".join(f"{m.id[-12:]}{int(m.unread)}" for m in messages[:s.mail_count]))
+
+
+class SideBySide(QWidget):
+    """Two panes next to each other (the week calendar and mail; recent meetings and to-dos),
+    or one above the other when the window is too narrow (Home decides, and rebuilds itself
+    when you resize past that point). pane=None: two equal halves; pane=N: the right one is
+    a side pane N px wide."""
+    NARROW = 780     # Home narrower than this: stack them
+    PANE = 340       # the mail pane's width (a bit less on smaller windows)
+
+    def __init__(self, left: QWidget, right: QWidget, pane: int | None = None, stacked: bool = False):
+        super().__init__()
+        self.left, self.right, self.pane = left, right, pane
+        box = QBoxLayout(QBoxLayout.TopToBottom if stacked else QBoxLayout.LeftToRight, self)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(16)
+        box.addWidget(left, 1)
+        box.addWidget(right, 0 if (pane or stacked) else 1)
+        if not stacked:
+            if pane:
+                right.setFixedWidth(pane)
+            else:  # equal halves, whatever is inside
+                for w in (left, right):
+                    w.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.box, self.stacked = box, stacked
+
+
+def mail_section(win, col: QVBoxLayout) -> None:
+    """The mail pane: your newest emails, click one to read it in Outlook."""
+    if win.w.s.mail_on_home:
+        col.addWidget(mail_pane(win), 1)
+
+
+def mail_pane(win) -> QWidget:
+    s = win.w.s
+    pane = card()
+    pane.setProperty("pane", "mail")
+    outer = QVBoxLayout(pane)
+    outer.setContentsMargins(6, 10, 6, 8)
+    outer.setSpacing(4)
+    head = QHBoxLayout()
+    head.setContentsMargins(10, 0, 4, 2)
+    head.setSpacing(6)
+    head.addWidget(icon_label("mail", T["accent"], 16))
+    head.addWidget(label("Mail", "h2"))
+    messages, fetched = mail.cached()
+    shown = messages[:max(5, min(10, s.mail_count))]
+    unread = sum(m.unread for m in shown)
+    if unread:
+        head.addWidget(label(f"{unread} unread", "muted"), 0, Qt.AlignBottom)
+    head.addStretch(1)
+    connected = mail.connected()
+    if connected:
+        head.addWidget(button("", "refresh", "ghost", tip="Check for new mail", icon_color=T["muted"],
+                              on_click=win.w.refresh_mail))
+        head.addWidget(button("", "external", "ghost", tip="Open Outlook", icon_color=T["muted"],
+                              on_click=lambda: _open("https://outlook.office.com/mail/")))
+    outer.addLayout(head)
+
+    if not connected:
+        body = QVBoxLayout()
+        body.setContentsMargins(12, 4, 12, 6)
+        body.setSpacing(8)
+        body.addWidget(label("See your latest emails here", "h2"))
+        body.addWidget(label("Add your work account in <b>Settings › Online Accounts › Microsoft 365</b>. "
+                             "GNOME signs you in, so there's no setup in Azure.", "muted", wrap=True))
+        body.addWidget(button("Open Online Accounts", "external", "primary", on_click=open_online_accounts))
+        body.addWidget(button("Don't show mail", "x", "ghost", icon_color=T["muted"],
+                              on_click=lambda: _hide_mail(win)))
+        outer.addLayout(body)
+        outer.addStretch(1)
+        return pane
+    if not shown:
+        msg = (f"Couldn't load your mail: {win.w.mail_error}" if win.w.mail_error
+               else "Loading your mail…" if not fetched else "Your inbox is empty.")
+        note = label(msg, "muted", wrap=True)
+        note.setContentsMargins(12, 6, 12, 6)
+        outer.addWidget(note)
+        outer.addStretch(1)
+        return pane
+    if win.w.mail_error:
+        note = label(f"Couldn't check for new mail: {win.w.mail_error}", "faint", wrap=True)
+        note.setContentsMargins(12, 0, 12, 4)
+        outer.addWidget(note)
+    for i, m in enumerate(shown):
+        if i:
+            outer.addWidget(_rule())
+        outer.addWidget(_mail_row(m))
+    outer.addStretch(1)
+    return pane
+
+
+def _mail_row(m: mail.Message) -> QWidget:
+    row = ClickableCard()
+    row.setProperty("card", False)
+    row.setProperty("mailrow", True)
+    row.setToolTip(f"{m.sender} <{m.address}>\n{m.subject}\nClick to read it in Outlook" if m.address
+                   else f"{m.sender}\n{m.subject}\nClick to read it in Outlook")
+    if m.link:
+        row.clicked.connect(lambda: _open(m.link))
+    lay = QHBoxLayout(row)
+    lay.setContentsMargins(12, 9, 14, 9)
+    lay.setSpacing(10)
+    dot = icon_label("record", T["accent"] if m.unread else "transparent", 8)
+    lay.addWidget(dot, 0, Qt.AlignTop)
+    text = QVBoxLayout()
+    text.setSpacing(1)
+    top = QHBoxLayout()
+    top.setSpacing(6)
+    who = ElidedLabel(m.sender)
+    f = who.font()
+    f.setWeight(f.Weight.Bold if m.unread else f.Weight.Medium)
+    who.setFont(f)
+    top.addWidget(who, 1)
+    if m.important:
+        top.addWidget(icon_label("alert", T["red"], 13))
+    if m.attachments:
+        top.addWidget(icon_label("clip", T["muted"], 13))
+    top.addWidget(label(_when(m.received), "muted"))
+    text.addLayout(top)
+    subject = ElidedLabel(m.subject)
+    if m.unread:
+        f = subject.font()
+        f.setWeight(f.Weight.DemiBold)
+        subject.setFont(f)
+    text.addWidget(subject)
+    if m.preview:
+        text.addWidget(ElidedLabel(m.preview, "faint"))
+    lay.addLayout(text, 1)
+    return row
+
+
+def _rule() -> QWidget:
+    from .views import divider
+    d = divider()
+    d.setContentsMargins(12, 0, 12, 0)
+    return d
+
+
+def _when(dt: datetime) -> str:
+    today = date.today()
+    if dt.date() == today:
+        return f"{dt:%H:%M}"
+    if (today - dt.date()).days == 1:
+        return "Yesterday"
+    if (today - dt.date()).days < 7:
+        return f"{dt:%a}"
+    return f"{dt:%-d %b}"
+
+
+def open_online_accounts() -> None:
+    """GNOME Settings › Online Accounts, where the Microsoft 365 account is added."""
+    import shutil
+    import subprocess
+    if shutil.which("gnome-control-center"):
+        subprocess.Popen(["gnome-control-center", "online-accounts"], start_new_session=True)
+    else:
+        _open("https://help.gnome.org/users/gnome-help/stable/accounts.html")
+
+
+def _hide_mail(win) -> None:
+    s = config.load()
+    s.mail_on_home = False
+    config.save(s)
+    win.w.s.mail_on_home = False
+    win.refresh(force=True)
 
 
 # --------------------------------------------------------------------------- to-dos

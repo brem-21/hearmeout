@@ -11,6 +11,8 @@ from pathlib import Path
 
 import httpx
 
+from .stopping import run
+
 API_URL = "https://api.elevenlabs.io/v1/speech-to-text"
 
 # Start a new line when a speaker pauses this long (seconds).
@@ -29,9 +31,12 @@ class Utterance:
 
 
 def transcribe(audio: Path, api_key: str, model: str, *, language: str | None = None,
-               keyterms: list[str] | None = None, me: str = "Me", two_track: bool = True) -> list[Utterance]:
+               keyterms: list[str] | None = None, me: str = "Me", two_track: bool = True,
+               cancel=None, late=None, finished=None) -> list[Utterance]:
     """two_track: the file is our stereo mic+system recording. Otherwise (any other
-    audio file) speakers are told apart by diarization instead."""
+    audio file) speakers are told apart by diarization instead.
+    cancel: a threading.Event; set it to stop waiting. late(utterances) is called if the
+    transcript still arrives after that (it's paid for, so worth keeping)."""
     data: dict = {"model_id": model, "tag_audio_events": "false", "timestamps_granularity": "word"}
     data["use_multi_channel" if two_track else "diarize"] = "true"
     if language:
@@ -39,9 +44,16 @@ def transcribe(audio: Path, api_key: str, model: str, *, language: str | None = 
     if keyterms:
         data["keyterms"] = keyterms  # sent as repeated form fields
 
-    with open(audio, "rb") as f:
-        resp = httpx.post(API_URL, headers={"xi-api-key": api_key}, data=data,
-                          files={"file": (audio.name, f, mimetypes.guess_type(audio.name)[0] or "application/octet-stream")}, timeout=httpx.Timeout(30, read=1800))
+    def request() -> list[Utterance]:
+        with open(audio, "rb") as f:
+            resp = httpx.post(API_URL, headers={"xi-api-key": api_key}, data=data, timeout=httpx.Timeout(30, read=1800),
+                              files={"file": (audio.name, f, mimetypes.guess_type(audio.name)[0] or "application/octet-stream")})
+        return _parse(resp, me, two_track)
+
+    return run(request, cancel, late, finished)
+
+
+def _parse(resp: httpx.Response, me: str, two_track: bool) -> list[Utterance]:
     if resp.status_code != 200:
         raise RuntimeError(f"ElevenLabs transcription failed ({resp.status_code}): {resp.text[:500]}")
     body = resp.json()

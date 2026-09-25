@@ -133,6 +133,21 @@ press **Unpublish** in Outlook and **Disconnect** in Hear Me Out. If there's no
 The link is kept in `~/.config/hearmeout/config.toml` (only you can read it) and your
 next few days of events in `~/.local/share/hearmeout/calendar.json`.
 
+### Show your recent emails (optional)
+
+Hear Me Out reads your inbox through the work account you add to GNOME, so there's
+nothing to register in Azure:
+
+1. Open **Settings › Online Accounts › Microsoft 365** (or **Open Online Accounts** on
+   Home) and sign in with your work account.
+2. That's it: Home lists your newest emails within a few seconds, and checks for new
+   ones every 5 minutes.
+
+GNOME asks Microsoft for access on your behalf. If your organisation hasn't approved
+GNOME Online Accounts, Microsoft shows "Need admin approval"; ask IT to approve it.
+Choose how many emails to show, or hide them, in **Settings › Integrations › Mail**.
+The latest ones are kept in `~/.local/share/hearmeout/mail.json` (only you can read it).
+
 ## Use
 
 ### The app (recommended)
@@ -140,9 +155,19 @@ next few days of events in `~/.local/share/hearmeout/calendar.json`.
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The app opens on **Home**: a greeting, **Record now**, a reminder if your name or
-keys are still missing, your week from the calendar, your recent meetings and your
-open to-dos (tick them off right there).
+keys are still missing, your week from the calendar with your mail beside it, then
+your recent meetings with your open to-dos beside them (tick them off right there). On
+a narrow window each pair stacks, one above the other.
 
+- **Usage** (top right): what's left on your accounts, e.g. `$4.80 · 76k credits`.
+  Click it for ElevenLabs credits used and left (and when they reset), your
+  OpenRouter balance and spend today / this month, and what Hear Me Out used this
+  month: recordings and minutes of audio, sets of notes, tokens in / out and cost
+  (by model). To see ElevenLabs credits, your key needs the **User: read**
+  permission (ElevenLabs › API keys).
+- **Mail** (a pane beside the week; below it on a narrow window): your 5–10 newest emails (8 by default), unread first in bold, with
+  attachment and high-importance marks. Click one to read it in Outlook on the web.
+  See [Show your recent emails](#show-your-recent-emails-optional).
 - **The week** shows the working days, Monday to Friday, with today highlighted. **‹ ›** move between
   weeks and **Today** comes back. Hover a meeting for who's invited. Click it to join
   the call (↗), or, for a meeting you recorded, to open its notes (◆ saved,
@@ -167,6 +192,7 @@ meetings; opening it again (from the app menu or the tray) brings the window bac
 
 | In the list | What you can do |
 |---|---|
+| **To save**: *Making notes* | **Stop** (also in the notification and the right-click menu) stops transcribing / writing notes. The recording is kept, and so is a transcript that was already made, so **Make notes** later never pays for it twice |
 | **To save**: *Ready to save* | read the summary, to-dos (with the quote each came from and **Hear it**), team tasks and transcript; rename the meeting; leave out tasks; pick what goes into Obsidian, then **Save**. A progress bar counts each file. |
 | **To save**: *Failed* | see why (no internet, bad API key…), **Try again**, play or delete the recording |
 | **Saved in Obsidian** (wherever you saved it, even if you rename or move the folder in Obsidian) | the same view: tick off to-dos (the note in Obsidian updates), click a transcript time to hear it, **Open in Obsidian** |

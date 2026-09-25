@@ -9,6 +9,9 @@ from datetime import date
 import httpx
 from pydantic import BaseModel, Field, ValidationError
 
+from . import usage
+from .stopping import run
+
 
 class ActionItem(BaseModel):
     task: str = Field(description="What needs to be done, as a short imperative sentence.")
@@ -75,7 +78,7 @@ def _strict(schema):
 
 def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: str = "Me",
               names: list[str] | None = None, day: date | None = None,
-              others: list[str] | None = None, event=None) -> MeetingNotes:
+              others: list[str] | None = None, event=None, cancel=None) -> MeetingNotes:
     day = day or date.today()
     names_text = ", ".join(f'"{n}"' for n in (names or []) if n) or "(name unknown)"
     messages = [
@@ -92,16 +95,21 @@ def summarize(transcript: str, *, api_key: str, base_url: str, model: str, me: s
         "response_format": {"type": "json_schema",
                             "json_schema": {"name": "meeting_notes", "strict": True, "schema": schema}},
         "provider": {"require_parameters": True},  # OpenRouter: only route to providers that honour the schema
+        "usage": {"include": True},  # OpenRouter: report tokens and cost, for the usage panel
     }
     headers = {"Authorization": f"Bearer {api_key}", "X-Title": "Hear Me Out",
                "HTTP-Referer": "https://github.com/brem-21/hearmeout"}
 
     with httpx.Client(base_url=base_url, headers=headers, timeout=httpx.Timeout(30, read=600)) as client:
         for attempt in range(2):
-            resp = client.post("/chat/completions", json=payload)
+            resp = run(lambda: client.post("/chat/completions", json=payload), cancel)
             if resp.status_code != 200:
                 raise RuntimeError(f"Model request failed ({resp.status_code}): {resp.text[:500]}")
-            content = resp.json()["choices"][0]["message"]["content"] or ""
+            body = resp.json()
+            used = body.get("usage") or {}
+            usage.record("llm", model=body.get("model") or model, tokens_in=used.get("prompt_tokens", 0),
+                         tokens_out=used.get("completion_tokens", 0), cost=used.get("cost"))
+            content = body["choices"][0]["message"]["content"] or ""
             try:
                 notes = MeetingNotes.model_validate_json(_strip_fences(content))
                 return _fix_owners(notes, [me, *(names or [])])
@@ -118,7 +126,8 @@ def _invite(event) -> str:
     if event is None:
         return ""
     lines = ["Calendar invite for this meeting (context only: people invited may not have attended, "
-             "and the agenda may not have been followed; only report what the transcript shows):",
+             "and the agenda may not have been followed; only report what the transcript shows. "
+             "Write the title from what was actually discussed, not from the invite's title):",
              f"- Title: {event.subject}"]
     if event.organizer:
         lines.append(f"- Organiser: {event.organizer}")

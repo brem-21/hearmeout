@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
-from . import agenda, library, obsidian, outlook, theme
+from . import agenda, library, obsidian, outlook, theme, usageview
 from .gui import _load_choices, _save_choices
 from .player import Player
 from .settings import SettingsPage
@@ -183,6 +183,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Esc"), self, self.go_home)
         QShortcut(QKeySequence("Alt+Home"), self, self.go_home)
         self.w.changed.connect(self.refresh)
+        self.w.balances_changed.connect(self._balances_changed)
         self.clock = QTimer(self)
         self.clock.timeout.connect(self._tick)
         self.clock.start(500)
@@ -396,6 +397,7 @@ class MainWindow(QMainWindow):
             self.list.clearSelection()
             self.list.setCurrentRow(-1)
             self.list.blockSignals(False)
+            self.w.check_balances()  # at most every 5 minutes, in the background
             key = self._home_key()
             if force or getattr(self.detail.currentWidget(), "state_key", None) != key:
                 # Home is kept once built: coming back to it is instant unless something on it changed.
@@ -412,6 +414,14 @@ class MainWindow(QMainWindow):
         else:
             self._set_current(target, rebuild=force or target != self.current or self._stale(target))
         self._tick()
+
+    def _balances_changed(self) -> None:
+        btn = getattr(self, "_usage_btn", None)
+        try:
+            if btn is not None:
+                btn.update_text()
+        except RuntimeError:  # that Home page was replaced
+            pass
 
     def show_todos(self, force: bool = False) -> None:
         """The To-dos page (rebuilt when a to-do or the view changes)."""
@@ -518,7 +528,10 @@ class MainWindow(QMainWindow):
                                    lambda: QDesktopServices.openUrl(QUrl(obsidian.open_uri(obj.vault, main))))
                 menu.addAction(theme.icon("folder", T["text"], 16), "Show folder",
                                lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(obj.folder))))
-            elif isinstance(obj, library.PendingRecording) and not obj.ready and obj.session not in self.w.jobs:
+            elif isinstance(obj, library.PendingRecording) and obj.session in self.w.jobs:
+                menu.addAction(theme.icon("stop", T["text"], 16), "Stop making notes",
+                               lambda: self.w.stop_notes(obj.session))
+            elif isinstance(obj, library.PendingRecording) and not obj.ready:
                 menu.addAction(theme.icon("sparkle", T["text"], 16), "Make notes",
                                lambda: self.w.process(obj.session))
             menu.addSeparator()
@@ -752,7 +765,28 @@ class MainWindow(QMainWindow):
         parts += [f"{e.id}:{e.subject}:{e.start}:{e.start <= now}:{e.end <= now}"
                   for evs in (days or {}).values() for e in evs]
         parts.append(f"{outlook.connected()}:{self.weeks.key()}:{date.today()}")
+        parts.append(agenda.mail_key(self))
+        parts.append(f"{self._home_wide()}:{self._pane_width()}")
         return "home|" + "|".join(parts) + f"|{self.w.mode}|{','.join(self.setup_missing())}"
+
+    def _home_width(self) -> int:
+        """How wide Home's column is in this window (it's centred, at most 1240 px)."""
+        return min(1240, max(0, self.detail.width() - 64))
+
+    def _home_wide(self) -> bool:
+        """Room for two panes side by side?"""
+        return self._home_width() >= agenda.SideBySide.NARROW
+
+    def _pane_width(self) -> int:
+        return agenda.SideBySide.PANE if self._home_width() >= 1080 else 280
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # Home lays out its panes for the window's width: rebuild it when that changes enough
+        layout = (self._home_wide(), self._pane_width())
+        if getattr(self, "_home_layout", None) not in (None, layout) and self.current == "home":
+            QTimer.singleShot(0, self.refresh)
+        self._home_layout = layout
 
     def _home_page(self) -> QWidget:
         page = QWidget()
@@ -769,12 +803,12 @@ class MainWindow(QMainWindow):
         centre = QHBoxLayout(body)
         centre.setContentsMargins(32, 28, 32, 28)
         col_w = QWidget()
-        col_w.setMaximumWidth(880)
+        col_w.setMaximumWidth(1240)  # two panes side by side need the room
         col = QVBoxLayout(col_w)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(14)
         centre.addStretch(1)
-        centre.addWidget(col_w, 8)
+        centre.addWidget(col_w, 100)  # the full width, up to the maximum; any extra is split either side
         centre.addStretch(1)
         scroll.setWidget(body)
 
@@ -790,6 +824,9 @@ class MainWindow(QMainWindow):
         texts.addWidget(greeting)
         texts.addWidget(label(f"{date.today():%A %-d %B}", "muted"))
         head.addLayout(texts, 1)
+        self._usage_btn = usageview.UsageButton(self)  # credits left, top right
+        head.addWidget(self._usage_btn, 0, Qt.AlignVCenter)
+        head.addSpacing(6)
         if self.w.recorder is None:
             head.addWidget(button("Record now", "record", "record", on_click=self._record_clicked), 0, Qt.AlignVCenter)
         col.addLayout(head)
@@ -835,9 +872,27 @@ class MainWindow(QMainWindow):
              "wave", T["green"] if watching else T["faint"], self.open_settings, "Change in Settings")
         col.addLayout(tiles)
 
-        agenda.week_section(self, col)
+        if outlook.connected() and self.w.s.mail_on_home:  # calendar with the mail pane beside it
+            left, right = QWidget(), QWidget()
+            lcol, rcol = QVBoxLayout(left), QVBoxLayout(right)
+            for c in (lcol, rcol):
+                c.setContentsMargins(0, 0, 0, 0)
+                c.setSpacing(10)
+            agenda.week_section(self, lcol)
+            lcol.addStretch(1)
+            rcol.addSpacing(6)
+            agenda.mail_section(self, rcol)
+            col.addWidget(agenda.SideBySide(left, right, pane=self._pane_width(), stacked=not self._home_wide()))
+        else:
+            agenda.week_section(self, col)
+            agenda.mail_section(self, col)
 
-        # recent meetings
+        # recent meetings, with your open to-dos beside them
+        main_col = col
+        meetings_w, todos_w = QWidget(), QWidget()
+        col = QVBoxLayout(meetings_w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(14)
         recent = self._recent()
         col.addSpacing(6)
         col.addWidget(label("Recent meetings", "h2"))
@@ -901,6 +956,10 @@ class MainWindow(QMainWindow):
             col.addWidget(c)
 
         # open to-dos
+        col.addStretch(1)
+        col = QVBoxLayout(todos_w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(14)
         todos = self._open_todos()
         if todos:
             col.addSpacing(6)
@@ -929,11 +988,17 @@ class MainWindow(QMainWindow):
                 lay.addLayout(tl, 1)
                 if due:
                     txt, kind = friendly_due(due)
-                    lay.addWidget(chip(txt, "calendar", kind))
+                    lay.addWidget(chip(txt, "calendar", kind), 0, Qt.AlignVCenter)
                 open_btn = button("", "chevron", "ghost", tip="Open the meeting", icon_color=T["faint"],
                                   on_click=lambda _=False, key=m.key: self.select(key))
                 lay.addWidget(open_btn)
                 col.addWidget(c)
+        col.addStretch(1)
+        col = main_col
+        if todos:
+            col.addWidget(agenda.SideBySide(meetings_w, todos_w, stacked=not self._home_wide()))  # equal halves
+        else:
+            col.addWidget(meetings_w)
         col.addStretch(1)
         return page
 
@@ -1013,7 +1078,7 @@ class MainWindow(QMainWindow):
         view = MeetingView(self._bare(rec), self.player, actions=[] if busy else [self._delete_btn(rec)])
         view.state_key = self._state_key(rec.key)
         if busy:
-            view.set_callout(self._progress_card(self.w.jobs[rec.session].message))
+            view.set_callout(self._progress_card(self.w.jobs[rec.session].message, rec.session))
         elif rec.error:
             view.set_callout(callout(
                 "bad", "alert", "Couldn't make notes for this recording",
@@ -1022,13 +1087,15 @@ class MainWindow(QMainWindow):
                 [button("Settings", "settings", on_click=self.open_settings),
                  button("Try again", "refresh", "primary", on_click=lambda: self.w.process(rec.session))]))
         else:
+            has_transcript = (rec.session / "transcript.json").exists()
             view.set_callout(callout(
                 "info", "sparkle", "Not turned into notes yet",
-                "Make a transcript, summary and to-dos from this recording.",
+                "The transcript is already made, so this only writes the summary and to-dos." if has_transcript
+                else "Make a transcript, summary and to-dos from this recording.",
                 [button("Make notes", "sparkle", "primary", on_click=lambda: self.w.process(rec.session))]))
         return view
 
-    def _progress_card(self, message: str) -> QWidget:
+    def _progress_card(self, message: str, session: Path | None = None) -> QWidget:
         """Saving the recording → Transcribing → Writing notes, with the current step highlighted."""
         m = message.lower()
         step = 0 if ("saving the recording" in m or "starting" in m) else 1 if "transcrib" in m else 2
@@ -1036,7 +1103,13 @@ class MainWindow(QMainWindow):
         lay = QVBoxLayout(c)
         lay.setContentsMargins(18, 16, 18, 16)
         lay.setSpacing(12)
-        lay.addWidget(label("Making notes…", "h2"))
+        top = QHBoxLayout()
+        top.addWidget(label("Making notes…", "h2"))
+        top.addStretch(1)
+        if session is not None:
+            top.addWidget(button("Stop", "stop", tip="Stop transcribing and writing notes. The recording is kept.",
+                                 on_click=lambda: self.w.stop_notes(session)))
+        lay.addLayout(top)
         steps = QHBoxLayout()
         steps.setSpacing(20)
         for i, name in enumerate(("Saving the recording", "Transcribing", "Writing summary and to-dos")):

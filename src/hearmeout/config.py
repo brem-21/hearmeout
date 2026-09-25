@@ -63,6 +63,9 @@ class Settings:
     ics_url: str = ""  # a published calendar link (Outlook › Shared calendars › Publish): no sign-in needed
     remind_before: int = 5  # minutes before a meeting to notify you (0 = never)
 
+    mail_on_home: bool = True  # show recent emails on Home (from GNOME Online Accounts › Microsoft 365)
+    mail_count: int = 8        # how many (5 to 10)
+
 
 # env var -> (settings attribute, converter)
 _ENV = {
@@ -99,6 +102,8 @@ _TOML = {
     ("microsoft", "tenant"): "ms_tenant",
     ("microsoft", "ics_url"): "ics_url",
     ("microsoft", "remind_before"): "remind_before",
+    ("mail", "show_on_home"): "mail_on_home",
+    ("mail", "count"): "mail_count",
 }
 
 
@@ -174,6 +179,11 @@ client_id = ""     # empty = Hear Me Out's own; or your organisation's app (clie
 tenant = "organizations"
 ics_url = ""       # or, with no sign-in: your calendar's published ICS link
 remind_before = 5  # minutes before a meeting to notify you (0 = never)
+
+[mail]
+# Recent emails on Home, from the Microsoft 365 account in GNOME Settings › Online Accounts.
+show_on_home = true
+count = 8          # 5 to 10
 """
         )
         CONFIG_FILE.chmod(0o600)

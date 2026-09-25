@@ -223,6 +223,19 @@ class PendingRecording:
         return pipeline.is_ready(self.session)
 
 
+def _event_title(info: dict) -> str | None:
+    """The matched calendar event's title, unless it can't be this call (e.g. a Slack call
+    matched to the Teams meeting booked at the same time, before matching was stricter)."""
+    from . import outlook
+    if not info.get("event"):
+        return None
+    try:
+        event = outlook.Event.from_dict(info["event"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return event.subject if outlook.fits(event, info.get("app"), info.get("people") or []) else None
+
+
 def pending_recordings() -> list[PendingRecording]:
     out = []
     for session in reversed(pipeline.pending_sessions()):
@@ -236,7 +249,7 @@ def pending_recordings() -> list[PendingRecording]:
         except ValueError:
             continue
         out.append(PendingRecording(session, info.get("app"), info.get("title_hint"), started, duration,
-                                    info.get("people") or [], (info.get("event") or {}).get("subject")))
+                                    info.get("people") or [], _event_title(info)))
     return out
 
 

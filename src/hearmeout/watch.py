@@ -12,6 +12,7 @@ import os
 import shlex
 import shutil
 import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -21,7 +22,8 @@ from PySide6.QtGui import QAction, QColor, QDesktopServices, QIcon, QPainter, QP
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import audio, config, detect, notify, obsidian, outlook, pipeline
+from . import audio, config, detect, mail, notify, obsidian, outlook, pipeline, usage
+from .stopping import Stopped
 
 STATE_FILE = config.DATA_DIR / "watch-state.json"
 AUTOSTART_FILE = config.CONFIG_DIR.parent / "autostart" / f"{notify.DESKTOP_ENTRY}.desktop"
@@ -32,6 +34,7 @@ POLL_MS = 2000
 CONFIRM_POLLS = 2  # a call must be seen twice in a row (about 2-4 s) before we ask
 CALENDAR_MS = 10 * 60 * 1000  # how often to re-read the calendar
 REMIND_MS = 20 * 1000         # how often to check for meetings about to start
+MAIL_MS = 5 * 60 * 1000       # how often to fetch new emails for Home
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -135,19 +138,53 @@ class _Processor(QThread):
     status = Signal(str)
     done = Signal(object)   # Meeting
     failed = Signal(str)
+    stopped = Signal()      # the Stop button was pressed
 
     def __init__(self, session: Path, settings: config.Settings, recorder: audio.Recorder | None = None):
         super().__init__()
         self.session, self.settings, self.recorder = session, settings, recorder
         self.message = "Saving the recording…" if recorder else "Starting…"
+        self.cancel = threading.Event()
+        self.again = False  # "Make notes" was pressed while this one was still stopping
 
     def run(self) -> None:
         try:
             if self.recorder is not None:
-                self.recorder.stop()
-            meeting, _ = pipeline.prepare(self.session, self.settings, status=self.status.emit)
+                self.recorder.stop()  # always finish saving the audio, even if stopped
+            meeting, _ = pipeline.prepare(self.session, self.settings, status=self.status.emit, cancel=self.cancel)
             self.done.emit(meeting)
+        except Stopped:
+            self.stopped.emit()
         except Exception as e:  # network, API credit, no speech… keep the recording and report
+            if self.cancel.is_set():
+                self.stopped.emit()
+            else:
+                self.failed.emit(str(e))
+
+
+class _BalanceCheck(QThread):
+    """Asks ElevenLabs and OpenRouter what's left on your accounts, off the UI thread."""
+    done = Signal(object)
+
+    def __init__(self, settings: config.Settings):
+        super().__init__()
+        self.settings = settings
+
+    def run(self) -> None:
+        try:
+            self.done.emit(usage.balances(self.settings))
+        except Exception as e:
+            self.done.emit(e)
+
+
+class _MailRefresh(QThread):
+    """Fetches your newest emails off the UI thread."""
+    failed = Signal(str)
+
+    def run(self) -> None:
+        try:
+            mail.refresh()
+        except Exception as e:  # offline, not approved…: Home keeps showing the last copy
             self.failed.emit(str(e))
 
 
@@ -167,6 +204,7 @@ class _CalendarRefresh(QThread):
 
 class Watcher(QObject):
     changed = Signal()                 # something the window shows has changed
+    balances_changed = Signal()        # new account balances from ElevenLabs / OpenRouter
     _action = Signal(int, str)         # notification button presses, moved onto the UI thread
 
     def __init__(self):
@@ -192,6 +230,8 @@ class Watcher(QObject):
         self.rec_id = 0
         self.warn_id = 0                      # "nobody has spoken" warning, while shown
         self.jobs: dict[Path, _Processor] = {}       # session -> note-making in progress
+        self.stopping: dict[Path, _Processor] = {}   # session -> stopped, still closing its connection
+        self.making_ids: dict[int, Path] = {}        # "Making notes…" notification -> session
         self.prepared: dict[Path, obsidian.Meeting] = {}  # session -> notes ready to review
         self.ready_ids: dict[int, Path] = {}          # "Notes ready" notification -> session
         self.window = None
@@ -215,6 +255,15 @@ class Watcher(QObject):
         self.cal_timer.timeout.connect(self.refresh_calendar)
         self.cal_timer.start(CALENDAR_MS)
         QTimer.singleShot(1500, self.refresh_calendar)
+        self.mail_error = ""
+        self._mail_job: _MailRefresh | None = None
+        self.mail_timer = QTimer(self)
+        self.mail_timer.timeout.connect(self.refresh_mail)
+        self.mail_timer.start(MAIL_MS)
+        QTimer.singleShot(2500, self.refresh_mail)
+        self.balances = None           # (usage.ElevenLabs, usage.OpenRouter) once checked
+        self.balances_at = 0.0
+        self._balance_job: _BalanceCheck | None = None
         self.reminded: set[str] = set(state.get("reminded", []))  # meetings already reminded about
         self.remind_ids: dict[int, outlook.Event] = {}              # reminder notification -> meeting
         self.remind_timer = QTimer(self)
@@ -258,6 +307,29 @@ class Watcher(QObject):
             self.reminded = {k for k in self.reminded
                              if datetime.fromisoformat(k.rsplit("@", 1)[1]) > now - timedelta(days=1)}
             _save_state(reminded=sorted(self.reminded))
+
+    def check_balances(self, max_age: float = 300) -> None:
+        """Re-check what's left on your accounts if the last check is older than max_age seconds."""
+        if (self._balance_job and self._balance_job.isRunning()) or time.time() - self.balances_at < max_age:
+            return
+        job = self._balance_job = _BalanceCheck(config.load())
+
+        def done(result) -> None:
+            if not isinstance(result, Exception):
+                self.balances, self.balances_at = result, time.time()
+            self.balances_changed.emit()
+
+        job.done.connect(done)
+        job.start()
+
+    def refresh_mail(self) -> None:
+        if not self.s.mail_on_home or (self._mail_job and self._mail_job.isRunning()) or not mail.connected():
+            return
+        job = self._mail_job = _MailRefresh()
+        self.mail_error = ""
+        job.failed.connect(lambda err: setattr(self, "mail_error", err))
+        job.finished.connect(self.changed.emit)
+        job.start()
 
     def refresh_calendar(self) -> None:
         if not outlook.connected() or (self._cal_job and self._cal_job.isRunning()):
@@ -371,6 +443,8 @@ class Watcher(QObject):
                 self.keep_recording()
             elif key == "stop":
                 self.stop()
+        elif nid in self.making_ids and key == "stopnotes":
+            self.stop_notes(self.making_ids[nid])
         elif nid in self.remind_ids:
             e = self.remind_ids.pop(nid)
             if key in ("join", "default") and e.join_url:
@@ -396,7 +470,8 @@ class Watcher(QObject):
         self.s = config.load()  # pick up any config edits
         try:  # from the calendar already fetched, so starting never waits on the network
             event = outlook.event_for(datetime.now(), call.title_hint if call else None,
-                                      call.app if call else None, network=False)
+                                      call.app if call else None, network=False,
+                                      people=list(call.people) if call else None)
         except Exception:
             event = None
         self.session = pipeline.new_session(app=call.app if call else None,
@@ -429,7 +504,8 @@ class Watcher(QObject):
         if call:
             self.snoozed.add(call.key)  # don't ask again about the same call if it's still going
         nid = self.notifier.show("Making notes…", (reason + " " if reason else "") +
-                                 "Transcribing and summarising your meeting.", replaces=self.rec_id)
+                                 "Transcribing and summarising your meeting.", [("stopnotes", "Stop")],
+                                 replaces=self.rec_id)
         self.rec_id = 0
         self.process(session, recorder, nid)
         if self.window is not None and self.window.isVisible():
@@ -439,6 +515,9 @@ class Watcher(QObject):
         """Make notes for a recording (again, after a failure)."""
         if session in self.jobs:
             return
+        if session in self.stopping:  # still winding down: start again as soon as it has
+            self.stopping[session].again = True
+            return
         job = _Processor(session, config.load(), recorder)
 
         def status(msg: str) -> None:
@@ -446,16 +525,42 @@ class Watcher(QObject):
             self.changed.emit()
 
         job.status.connect(status)
-        job.done.connect(lambda meeting: self._ready(session, meeting, nid))
+        job.done.connect(lambda meeting: None if job.cancel.is_set() else self._ready(session, meeting, nid))
         job.failed.connect(lambda err: self._failed(session, err, nid))
-        job.finished.connect(lambda: self._job_finished(session))
+        job.finished.connect(lambda: self._job_finished(session, job))
         self.jobs[session] = job
+        if nid:
+            self.making_ids[nid] = session
         job.start()
         self._update_tray()
         self.changed.emit()
 
-    def _job_finished(self, session: Path) -> None:
-        self.jobs.pop(session, None)
+    def stop_notes(self, session: Path) -> None:
+        """The Stop button: stop transcribing / writing notes. The recording is kept, and a
+        transcript that was already made is kept too (so it's never paid for twice)."""
+        job = self.jobs.pop(session, None)
+        if job is None:
+            return
+        job.cancel.set()
+        self.stopping[session] = job  # keep the thread alive until its request has closed
+        for nid, s in list(self.making_ids.items()):
+            if s == session:
+                self.notifier.close(nid)
+                del self.making_ids[nid]
+        self._update_tray()
+        self.changed.emit()
+
+    def _job_finished(self, session: Path, job: "_Processor") -> None:
+        self.balances_at = 0  # credits were just used: check again next time they're shown
+        if self.jobs.get(session) is job:
+            del self.jobs[session]
+        if self.stopping.get(session) is job:
+            del self.stopping[session]
+            if job.again:
+                self.process(session)
+        for nid, s in list(self.making_ids.items()):
+            if s == session and session not in self.jobs:
+                del self.making_ids[nid]
         self._update_tray()
         self.changed.emit()
 
@@ -590,8 +695,14 @@ class Watcher(QObject):
         if self.recorder is not None:  # keep what was recorded; it shows up in the app to save later
             self.recorder.stop()
             self.recorder = None
+        for job in list(self.stopping.values()):
+            job.wait(5000)
         for job in list(self.jobs.values()):
             job.wait()
+        if self._balance_job is not None:
+            self._balance_job.wait(5000)
+        if self._mail_job is not None:
+            self._mail_job.wait(5000)
         from .settings import cancel_sign_in
         cancel_sign_in()
         if self._cal_job is not None:

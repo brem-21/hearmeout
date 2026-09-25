@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
     QPushButton, QRadioButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
-from . import config, obsidian, outlook, theme
+from . import config, mail, obsidian, outlook, theme
 from .obsidian import ITEMS
 from .theme import T
 from .views import button, card, icon_label, label
@@ -95,6 +95,11 @@ def cancel_sign_in() -> None:
     if _active is not None and _active.isRunning():
         _active.cancel()
         _active.wait(2000)
+
+
+def _open_online_accounts() -> None:
+    from .agenda import open_online_accounts
+    open_online_accounts()
 
 
 def _section(title: str, icon: str, subtitle: str = "") -> tuple[QWidget, QFormLayout]:
@@ -342,6 +347,31 @@ class SettingsPage(QWidget):
         self.remind.setCurrentIndex(self.remind.findData(self.s.remind_before))
         self.remind.setToolTip("A notification with a Join button, for meetings in your connected calendar")
         f.addRow("Remind me", self.remind)
+
+        # mail, through GNOME Online Accounts
+        mail_box = QVBoxLayout()
+        mail_box.setSpacing(6)
+        who = mail.account_name()
+        status = label(f"Using {who} from GNOME Online Accounts." if who else
+                       "Add your work account in GNOME <b>Settings › Online Accounts › Microsoft 365</b> "
+                       "to see your recent emails on Home. GNOME signs you in: no Azure setup.",
+                       "muted", wrap=True)
+        if who:
+            status.setStyleSheet(f"color: {T['green']};")
+        mail_box.addWidget(status)
+        row = QHBoxLayout()
+        self.mail_show = QCheckBox("Show recent emails on Home")
+        self.mail_show.setChecked(self.s.mail_on_home)
+        row.addWidget(self.mail_show)
+        self.mail_count = QComboBox()
+        for n in range(5, 11):
+            self.mail_count.addItem(f"{n} emails", n)
+        self.mail_count.setCurrentIndex(max(0, self.mail_count.findData(max(5, min(10, self.s.mail_count)))))
+        row.addWidget(self.mail_count)
+        row.addWidget(button("Open Online Accounts", "external", on_click=_open_online_accounts))
+        row.addStretch(1)
+        mail_box.addLayout(row)
+        f.addRow("Mail", mail_box)
         col.addWidget(c)
         self._sections["Integrations"] = c
         if _active is not None and _active.isRunning():
@@ -384,10 +414,10 @@ class SettingsPage(QWidget):
 
         for w in (self.name, self.aliases, self.eleven, self.router, self.folder, self.ms_client):
             w.textChanged.connect(self._changed)
-        for w in (self.model, self.vault, self.silence, self.remind):
+        for w in (self.model, self.vault, self.silence, self.remind, self.mail_count):
             w.currentIndexChanged.connect(self._changed)
         self.model.editTextChanged.connect(self._changed)
-        for w in (*self.items.values(), self.login, *self.unignore.values()):
+        for w in (*self.items.values(), self.login, *self.unignore.values(), self.mail_show):
             w.toggled.connect(self._changed)
         self.mode.buttonToggled.connect(self._changed)
         self._checker: _KeyCheck | None = None
@@ -556,10 +586,13 @@ class SettingsPage(QWidget):
         s.appearance = theme.MODE
         s.ms_client_id = self.ms_client.text().strip() or s.ms_client_id
         s.remind_before = int(self.remind.currentData())
+        s.mail_on_home = self.mail_show.isChecked()
+        s.mail_count = int(self.mail_count.currentData())
         config.save(s)
         self.watch.set_autostart(self.login.isChecked())
         if self.w is not None:
             self.w.s = config.load()
+            self.w.refresh_mail()  # e.g. mail was just switched on
             self.w.set_mode(mode)
             for key, cb in self.unignore.items():
                 if not cb.isChecked():
