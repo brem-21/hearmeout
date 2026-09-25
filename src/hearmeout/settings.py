@@ -59,15 +59,20 @@ class _KeyCheck(QThread):
 
 
 class _SignIn(QThread):
-    done = Signal(bool, str)  # ok, account name or error
+    """Connects the calendar off the UI thread: checks a published link, or signs in in the browser."""
+    done = Signal(bool, str)  # ok, what's connected or the error
 
-    def __init__(self, client_id: str, tenant: str):
+    def __init__(self, client_id: str = "", tenant: str = "", ics: str = ""):
         super().__init__()
-        self.client_id, self.tenant = client_id, tenant
+        self.client_id, self.tenant, self.ics = client_id, tenant, ics
         self.flow: outlook.SignIn | None = None
 
     def run(self) -> None:
         try:
+            if self.ics:
+                n = outlook.connect_ics(self.ics)
+                self.done.emit(True, f"your Outlook calendar ({n} meeting{'s' if n != 1 else ''} in the next few days)")
+                return
             self.flow = outlook.SignIn(self.client_id, self.tenant)
             name = self.flow.run()
             outlook.refresh()
@@ -301,18 +306,29 @@ class SettingsPage(QWidget):
         ms.addLayout(head)
         self.ms_status = label("", "muted", wrap=True)
         ms.addWidget(self.ms_status)
+        self.ms_help = label("In Outlook on the web: <b>Settings › Calendar › Shared calendars › Publish a "
+                             "calendar</b>. Choose your calendar and <b>Can view all details</b>, press "
+                             "<b>Publish</b>, then copy the <b>ICS</b> link and paste it here. No sign-in "
+                             "or admin needed. Keep the link private: anyone with it can see your calendar.",
+                             "muted", wrap=True)
+        ms.addWidget(self.ms_help)
+        self.ms_ics = QLineEdit()
+        self.ms_ics.setPlaceholderText("https://outlook.office365.com/owa/calendar/…/calendar.ics")
+        self.ms_ics.returnPressed.connect(self._ms_connect_ics)
+        ms.addWidget(self.ms_ics)
+        # Signing in with Microsoft needs an app registration; most people use the link instead.
         self.ms_client = QLineEdit(self.s.ms_client_id)
-        self.ms_client.setPlaceholderText("Application (client) ID, e.g. 1a2b3c4d-…")
-        self.ms_client.setToolTip("From your organisation's app registration in the Azure portal (see the README)")
+        self.ms_client.setPlaceholderText("Application (client) ID from your organisation's app registration")
         ms.addWidget(self.ms_client)
-        # Most people use Hear Me Out's own registration and never see this field.
-        self._own_app = bool(self.s.ms_client_id or not outlook.BUILT_IN_CLIENT_ID)
-        self.ms_own = button("Use my own app registration…", variant="ghost", on_click=self._ms_show_own)
+        self._own_app = bool(self.s.ms_client_id or outlook.BUILT_IN_CLIENT_ID)
         buttons = QHBoxLayout()
-        self.ms_connect = button("Sign in with Microsoft", "external", "primary", on_click=self._ms_sign_in)
+        self.ms_link_btn = button("Connect", "calendar", "primary", on_click=self._ms_connect_ics)
+        self.ms_connect = button("Sign in with Microsoft", "external", on_click=self._ms_sign_in)
         self.ms_cancel = button("Cancel", on_click=self._ms_cancel)
         self.ms_disconnect = button("Disconnect", "x", on_click=self._ms_sign_out)
-        for b in (self.ms_connect, self.ms_cancel, self.ms_disconnect, self.ms_own):
+        self.ms_own = button("Sign in with an app registration instead…", variant="ghost",
+                             on_click=self._ms_show_own)
+        for b in (self.ms_link_btn, self.ms_connect, self.ms_cancel, self.ms_disconnect, self.ms_own):
             buttons.addWidget(b)
         buttons.addStretch(1)
         ms.addLayout(buttons)
@@ -444,22 +460,38 @@ class SettingsPage(QWidget):
         if message:
             text = message
         elif busy:
-            text = "Finish signing in in your browser…"
+            text = "Connecting…" if _active.ics else "Finish signing in in your browser…"
         elif on:
             err = getattr(self.w, "calendar_error", "") if self.w else ""
-            text = f"Connected as {outlook.account() or 'your Microsoft account'}." + (f" Last sync failed: {err}"
-                                                                                        if err else "")
+            text = f"Connected: {outlook.account()}." + (f" Last sync failed: {err}" if err else "")
             ok = not err
         else:
             text = "Not connected."
         colour = T["green"] if ok else T["red"] if ok is False else T["muted"]
         self.ms_status.setText(text)
         self.ms_status.setStyleSheet(f"color: {colour};")
-        self.ms_client.setVisible(not on and self._own_app)
-        self.ms_own.setVisible(not on and not busy and not self._own_app)
-        self.ms_connect.setVisible(not on and not busy)
+        idle = not on and not busy
+        for w in (self.ms_help, self.ms_ics, self.ms_link_btn):
+            w.setVisible(idle)
+        self.ms_client.setVisible(idle and self._own_app)
+        self.ms_connect.setVisible(idle and self._own_app)
+        self.ms_own.setVisible(idle and not self._own_app)
         self.ms_cancel.setVisible(busy)
         self.ms_disconnect.setVisible(on and not busy)
+
+    def _start(self, job: "_SignIn") -> None:
+        global _active
+        _active = job
+        _active.done.connect(self._ms_done)
+        _active.start()
+        self._ms_refresh()
+
+    def _ms_connect_ics(self) -> None:
+        url = self.ms_ics.text().strip()
+        if not url:
+            self._ms_refresh("Paste your calendar's ICS link first.", False)
+            return
+        self._start(_SignIn(ics=url))
 
     def _ms_show_own(self) -> None:
         self._own_app = True
@@ -467,20 +499,16 @@ class SettingsPage(QWidget):
         self.ms_client.setFocus()
 
     def _ms_sign_in(self) -> None:
-        global _active
         own = self.ms_client.text().strip()
         client_id = own or outlook.BUILT_IN_CLIENT_ID
         if not client_id:
-            self._ms_refresh("Paste an application (client) ID first. The README shows how to get one.", False)
+            self._ms_refresh("Paste an application (client) ID first, or use a calendar link instead.", False)
             return
         s = config.load()
         if own != s.ms_client_id:  # keep your own ID even if the rest of the page isn't saved
             s.ms_client_id = own
             config.save(s)
-        _active = _SignIn(client_id, s.ms_tenant)
-        _active.done.connect(self._ms_done)
-        _active.start()
-        self._ms_refresh()
+        self._start(_SignIn(client_id, s.ms_tenant))
 
     def _ms_cancel(self) -> None:
         if _active is not None:
@@ -488,8 +516,9 @@ class SettingsPage(QWidget):
 
     def _ms_done(self, ok: bool, text: str) -> None:
         if ok:
-            self._ms_refresh(f"Connected as {text}.", True)
+            self._ms_refresh(f"Connected: {text}.", True)
             if self.w is not None:
+                self.w.calendar_error = ""
                 self.w.changed.emit()
         else:
             self._ms_refresh(text, False)

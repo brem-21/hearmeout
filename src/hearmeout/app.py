@@ -16,7 +16,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QFrame, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMenu,
-    QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget, QVBoxLayout, QWidget,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from . import library, obsidian, outlook, theme
@@ -701,50 +701,109 @@ class MainWindow(QMainWindow):
         parts = [f"{getattr(o, 'key', '')}:{self._badge_for(o)[0]}:{o.title}" for o in self._recent()]
         parts += [f"{t.file}:{t.line}" for _, t in self._open_todos()]
         now = datetime.now()
-        parts += [f"{e.id}:{e.subject}:{e.start}:{e.start <= now}" for e in self._upcoming()]
+        parts += [f"{e.id}:{e.subject}:{e.start}:{e.start <= now}:{e.end <= now}"
+                  for evs in self._week_events().values() for e in evs]
         return "home|" + "|".join(parts) + f"|{self.w.mode}|{','.join(self.setup_missing())}"
 
-    def _upcoming(self) -> list[outlook.Event]:
-        return outlook.upcoming() if outlook.connected() else []
+    def _week_events(self) -> dict[date, list[outlook.Event]]:
+        return outlook.week() if outlook.connected() else {}
 
-    def _coming_up(self, col: QVBoxLayout) -> None:
-        """Today's and tomorrow's meetings from your calendar, with a Join button."""
+    def _week(self, col: QVBoxLayout) -> None:
+        """This week's calendar, Monday to Sunday: click a meeting to join it."""
         if not outlook.connected():
             return
-        events = self._upcoming()
-        col.addSpacing(6)
-        col.addWidget(label("Coming up", "h2"))
-        if not events:
-            col.addWidget(label("Nothing else in your calendar today or tomorrow.", "muted"))
-            return
+        days = self._week_events()
         now, today = datetime.now(), date.today()
+        monday, sunday = min(days), max(days)
+        col.addSpacing(6)
+        head = QHBoxLayout()
+        head.addWidget(label("This week", "h2"))
+        span = (f"{monday:%-d}–{sunday:%-d %B}" if monday.month == sunday.month
+                else f"{monday:%-d %b} – {sunday:%-d %b}")
+        head.addWidget(label(span, "muted"), 0, Qt.AlignBottom)
+        head.addStretch(1)
+        total = len({e.id for evs in days.values() for e in evs if not e.all_day})
+        head.addWidget(label(f"{total} meeting{'s' if total != 1 else ''}", "muted"), 0, Qt.AlignBottom)
+        col.addLayout(head)
+
+        grid = card()
+        row = QHBoxLayout(grid)
+        row.setContentsMargins(6, 8, 6, 8)
+        row.setSpacing(2)
         me = [self.w.s.user_name, *self.w.s.user_aliases]
-        for e in events:
-            c = card()
-            lay = QHBoxLayout(c)
-            lay.setContentsMargins(16, 10, 14, 10)
-            lay.setSpacing(12)
-            live = e.start <= now
-            lay.addWidget(icon_label("calendar", T["red"] if live else T["accent"], 18))
-            t = QVBoxLayout()
-            t.setSpacing(2)
-            title = ElidedLabel(e.subject)
-            f = title.font()
-            f.setWeight(f.Weight.DemiBold)
-            title.setFont(f)
-            t.addWidget(title)
-            day = "" if e.start.date() == today else "Tomorrow " if (e.start.date() - today).days == 1 \
-                else f"{e.start:%a} "
-            others = e.others(me)
-            who = (", ".join(others[:3]) + (f" +{len(others) - 3}" if len(others) > 3 else "")) if others else ""
-            t.addWidget(ElidedLabel(" · ".join(x for x in (f"{day}{e.start:%H:%M}–{e.end:%H:%M}", who) if x), "muted"))
-            lay.addLayout(t, 1)
-            if live:
-                lay.addWidget(badge("Now", "bad"))
-            if e.join_url:
-                lay.addWidget(button("Join", "external", "primary" if live else None, tip=e.join_url,
-                                     on_click=lambda _=False, u=e.join_url: QDesktopServices.openUrl(QUrl(u))))
-            col.addWidget(c)
+        for d, events in days.items():
+            day_col = QVBoxLayout()
+            day_col.setContentsMargins(3, 6, 3, 6)
+            day_col.setSpacing(4)
+            is_today, past_day = d == today, d < today
+            name = label(f"{d:%a}".upper(), "faint")
+            name.setAlignment(Qt.AlignHCenter)
+            num = label(f"{d:%-d}")
+            num.setAlignment(Qt.AlignHCenter)
+            num.setFixedHeight(28)
+            num.setStyleSheet(f"font-size: 15px; font-weight: 700; border-radius: 14px; "
+                              + (f"background: {T['accent']}; color: {T['accent_text']};" if is_today
+                                 else f"color: {T['faint'] if past_day else T['text']};"))
+            day_col.addWidget(name)
+            day_col.addWidget(num)
+            if not events:
+                none = label("·", "faint")
+                none.setAlignment(Qt.AlignHCenter)
+                day_col.addWidget(none)
+            for e in events:
+                day_col.addWidget(self._week_event(e, now, me))
+            day_col.addStretch(1)
+            holder = QWidget()
+            holder.setLayout(day_col)
+            holder.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)  # seven equal columns
+            if is_today:
+                holder.setStyleSheet(f"QWidget#today {{ background: {T['accent_soft']}; border-radius: 8px; }}")
+                holder.setObjectName("today")
+                holder.setAttribute(Qt.WA_StyledBackground, True)
+            row.addWidget(holder, 1)
+        col.addWidget(grid)
+
+    def _week_event(self, e: outlook.Event, now: datetime, me: list[str]) -> QWidget:
+        """One meeting in the week view: time and title; hover for details, click to join."""
+        live, over = e.start <= now < e.end, e.end <= now
+        colour = T["red"] if live else T["faint"] if over else T["accent"]
+        box = ClickableCard()
+        box.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+        box.setProperty("card", False)
+        box.setObjectName("ev")
+        box.setStyleSheet(f"QFrame#ev {{ background: {T['surface'] if not over else 'transparent'}; "
+                          f"border: 1px solid {T['border']}; border-left: 3px solid {colour}; border-radius: 6px; }}"
+                          f"QFrame#ev:hover {{ border-color: {T['accent']}; }}")
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(5, 3, 3, 4)
+        lay.setSpacing(1)
+        when = "All day" if e.all_day else ("Now" if live else f"{e.start:%H:%M}")
+        t = label(when)
+        t.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {colour}; border: none; background: transparent;")
+        lay.addWidget(t)
+        text = e.subject if len(e.subject) <= 40 else e.subject[:38].rstrip() + "…"
+        title = label(text, wrap=True)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Minimum)
+        title.setStyleSheet(f"font-size: 12px; color: {T['faint'] if over else T['text']}; "
+                            "border: none; background: transparent;")
+        lay.addWidget(title)
+        others = e.others(me)
+        tip = [e.subject, "All day" if e.all_day else f"{e.start:%a %-d %b, %H:%M}–{e.end:%H:%M}"]
+        if others:
+            tip.append("With " + ", ".join(others[:6]) + (f" +{len(others) - 6}" if len(others) > 6 else ""))
+        if e.location and not e.location.lower().startswith("microsoft teams"):
+            tip.append(e.location)
+        link = e.join_url or e.web_link
+        if e.join_url and not over:
+            tip.append("Click to join")
+        elif link:
+            tip.append("Click to open in Outlook" if not e.join_url else "Click to open the meeting link")
+        box.setToolTip("\n".join(tip))
+        if link:
+            box.clicked.connect(lambda u=link: QDesktopServices.openUrl(QUrl(u)))
+        else:
+            box.setCursor(Qt.ArrowCursor)
+        return box
 
     def _home_page(self) -> QWidget:
         page = QWidget()
@@ -828,7 +887,7 @@ class MainWindow(QMainWindow):
              "wave", T["green"] if watching else T["faint"], self.open_settings, "Change in Settings")
         col.addLayout(tiles)
 
-        self._coming_up(col)
+        self._week(col)
 
         # recent meetings
         recent = self._recent()

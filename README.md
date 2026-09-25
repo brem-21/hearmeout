@@ -25,7 +25,7 @@ into your local Obsidian vault as plain Markdown.
 - **Headset or speakers.** Recording follows the mic and speaker your call app
   actually uses (USB or Bluetooth headset), even if you switch mid-call. On laptop
   speakers, the other side's voice picked up by your mic is filtered out.
-- **Knows your calendar.** Connect Microsoft 365 (Settings › Integrations) and a
+- **Knows your calendar.** Connect your Outlook calendar (Settings › Integrations) and a
   recording is named after the Outlook or Teams meeting it belongs to. Invitees'
   names help the transcript and the to-do owners, the invite's agenda helps the
   summary, and Home shows what's coming up with a **Join** button.
@@ -115,17 +115,22 @@ delete those too to remove everything.
 
 ### Connect your Outlook / Teams calendar (optional)
 
-**Settings › Integrations › Sign in with Microsoft**, then sign in with your work
-account in the browser and approve access. That's all. Hear Me Out asks only to read
-your calendar.
+No sign-in, no Azure and no admin needed. You give Hear Me Out a private link to
+your calendar:
 
-If your organisation doesn't let people approve apps themselves, Microsoft shows
-"Need admin approval". Ask IT to approve **Hear Me Out**, or register your own
-(see [Your own Microsoft app registration](#your-own-microsoft-app-registration)).
+1. In [Outlook on the web](https://outlook.office.com/calendar): **Settings ›
+   Calendar › Shared calendars › Publish a calendar**.
+2. Choose **Calendar** and **Can view all details**, then press **Publish**.
+3. Copy the **ICS** link (not the HTML one).
+4. In Hear Me Out: **Settings › Integrations**, paste it and press **Connect**.
 
-The sign-in is kept in `~/.config/hearmeout/microsoft.json` (only you can read it),
-your next few days of events in `~/.local/share/hearmeout/calendar.json`, and
-**Disconnect** deletes both.
+Keep the link private: anyone who has it can see your calendar. To stop sharing,
+press **Unpublish** in Outlook and **Disconnect** in Hear Me Out. If there's no
+**Publish a calendar** option, your organisation has turned it off; ask IT, or use
+[an app registration](#your-own-microsoft-app-registration) instead.
+
+The link is kept in `~/.config/hearmeout/config.toml` (only you can read it) and your
+next few days of events in `~/.local/share/hearmeout/calendar.json`.
 
 ## Use
 
@@ -213,9 +218,11 @@ To keep everything local, point `base_url` at Ollama (`http://localhost:11434/v1
 
 ## Your own Microsoft app registration
 
-Like Granola, Hear Me Out signs in to Microsoft 365 through one app registration
-of its own. Its ID is `BUILT_IN_CLIENT_ID` in `src/hearmeout/outlook.py`. To create
-it (maintainers), or to use your organisation's own:
+Instead of a calendar link, Hear Me Out can sign in to Microsoft 365 (**Settings ›
+Integrations › Sign in with an app registration instead**). Microsoft only allows
+this for a registered app, so someone with access to the Azure portal registers one
+once. That ID can go in `BUILT_IN_CLIENT_ID` in `src/hearmeout/outlook.py` for
+everyone, or be pasted in Settings:
 
 1. [portal.azure.com](https://portal.azure.com) › **Microsoft Entra ID** ›
    **App registrations** › **New registration**

@@ -60,6 +60,7 @@ class Settings:
     # Microsoft 365 integration (Outlook calendar, Teams meetings): your app registration's client ID.
     ms_client_id: str = ""
     ms_tenant: str = "organizations"  # or your organisation's tenant ID / domain
+    ics_url: str = ""  # a published calendar link (Outlook › Shared calendars › Publish): no sign-in needed
 
 
 # env var -> (settings attribute, converter)
@@ -95,6 +96,7 @@ _TOML = {
     ("app", "appearance"): "appearance",
     ("microsoft", "client_id"): "ms_client_id",
     ("microsoft", "tenant"): "ms_tenant",
+    ("microsoft", "ics_url"): "ics_url",
 }
 
 
@@ -168,6 +170,7 @@ appearance = "system"   # "system", "light" or "dark"
 # Outlook calendar and Teams meetings: sign in from Settings › Integrations.
 client_id = ""     # empty = Hear Me Out's own; or your organisation's app (client) ID
 tenant = "organizations"
+ics_url = ""       # or, with no sign-in: your calendar's published ICS link
 """
         )
         CONFIG_FILE.chmod(0o600)

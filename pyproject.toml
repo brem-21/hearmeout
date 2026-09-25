@@ -18,6 +18,8 @@ dependencies = [
     "pulsectl>=24.0",
     "python-xlib>=0.33",
     "jeepney>=0.8",
+    "icalendar>=6.0",
+    "recurring-ical-events>=3.0",
     "tomli>=2.0; python_version < '3.11'",
 ]
 

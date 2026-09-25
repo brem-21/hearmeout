@@ -1,4 +1,8 @@
-"""Your Microsoft 365 (Outlook / Teams) calendar, read with Microsoft Graph.
+"""Your Microsoft 365 (Outlook / Teams) calendar, read in one of two ways:
+
+- a published ICS link (Outlook › Settings › Calendar › Shared calendars › Publish a calendar):
+  paste it once, no sign-in and no app registration. This is the usual way.
+- Microsoft Graph, after signing in (needs an app registration, see below).
 
 Signing in opens the browser once; the tokens are kept in ~/.config/hearmeout/microsoft.json
 (readable only by you) and refreshed as needed. Nothing goes through any other server.
@@ -25,7 +29,7 @@ import threading
 import time
 import webbrowser
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlencode, urlparse
 
@@ -103,18 +107,46 @@ def client_id(s: config.Settings) -> str:
     return (s.ms_client_id or BUILT_IN_CLIENT_ID).strip()
 
 
-def connected() -> bool:
+def signed_in() -> bool:
     return bool(_load_tokens().get("refresh_token"))
 
 
+def ics_url() -> str:
+    url = config.load().ics_url.strip()
+    return "https://" + url[len("webcal://"):] if url.lower().startswith("webcal://") else url
+
+
+def connected() -> bool:
+    return signed_in() or bool(ics_url())
+
+
 def account() -> str:
-    """The signed-in account, e.g. "brempong@example.com" ("" if not signed in)."""
-    return _load_tokens().get("account", "") if connected() else ""
+    """Who or what is connected, e.g. "brempong@example.com" ("" if nothing is)."""
+    if signed_in():
+        return _load_tokens().get("account", "") or "your Microsoft account"
+    return "your published Outlook calendar" if ics_url() else ""
 
 
 def sign_out() -> None:
     TOKEN_FILE.unlink(missing_ok=True)
     CACHE_FILE.unlink(missing_ok=True)
+    s = config.load()
+    if s.ics_url:
+        s.ics_url = ""
+        config.save(s)
+
+
+def connect_ics(url: str) -> int:
+    """Check a published calendar link works, keep it, and return how many events are coming up."""
+    url = url.strip()
+    if not re.match(r"^(https?|webcal)://", url, re.I):
+        raise RuntimeError("That doesn't look like a calendar link. It should start with https:// and end in .ics")
+    probe = "https://" + url[len("webcal://"):] if url.lower().startswith("webcal://") else url
+    _parse_ics(_download_ics(probe), datetime.now() - timedelta(days=1), datetime.now() + timedelta(days=1))
+    s = config.load()
+    s.ics_url = url
+    config.save(s)
+    return len(refresh())
 
 
 class SignIn:
@@ -296,6 +328,89 @@ def parse_event(e: dict) -> Event:
 
 def fetch(start: datetime, end: datetime) -> list[Event]:
     """Your events between two local times (recurring meetings expanded), cancelled ones left out."""
+    if not signed_in() and ics_url():
+        return _parse_ics(_download_ics(ics_url()), start.replace(tzinfo=None), end.replace(tzinfo=None))
+    return _fetch_graph(start, end)
+
+
+# --------------------------------------------------------------------------- published calendar (ICS)
+
+_TEAMS_LINK = re.compile(r"https://teams\.microsoft\.com/l/meetup-join/[^\s<>\"]+")
+_ANY_CALL_LINK = re.compile(r"https://(?:[\w-]+\.)?(?:zoom\.us/j|meet\.google\.com|teams\.live\.com/meet|"
+                            r"[\w.-]*webex\.com/meet)[^\s<>\"]*")
+
+
+def _download_ics(url: str) -> bytes:
+    try:
+        r = httpx.get(url, timeout=30, follow_redirects=True)
+    except httpx.HTTPError as e:
+        raise RuntimeError(f"Couldn't reach your calendar link ({e.__class__.__name__}).") from e
+    if r.status_code != 200:
+        raise RuntimeError(f"Your calendar link didn't work (HTTP {r.status_code}). Publish it again in Outlook "
+                           "and paste the new ICS link.")
+    if b"BEGIN:VCALENDAR" not in r.content[:2000]:
+        raise RuntimeError("That link isn't a calendar. Use the ICS link (ending in .ics), not the HTML one.")
+    return r.content
+
+
+def _person(prop) -> str:
+    cn = str(prop.params.get("CN", "")).strip().strip('"') if hasattr(prop, "params") else ""
+    addr = str(prop).split(":", 1)[-1]
+    return _name({"emailAddress": {"name": cn, "address": addr}})
+
+
+def _ics_time(value) -> tuple[datetime, bool]:
+    """A DTSTART/DTEND value -> (naive local time, is it a whole day)."""
+    if not isinstance(value, datetime):  # a date: all-day event
+        return datetime(value.year, value.month, value.day), True
+    if value.tzinfo is None:
+        return value, False  # "floating" time: already local
+    return value.astimezone().replace(tzinfo=None), False
+
+
+def _parse_ics(data: bytes, start: datetime, end: datetime) -> list[Event]:
+    import icalendar
+    import recurring_ical_events
+    try:
+        cal = icalendar.Calendar.from_ical(data)
+        items = recurring_ical_events.of(cal).between(start.astimezone(), end.astimezone())
+    except Exception as e:
+        raise RuntimeError(f"Couldn't read your calendar ({e}).") from e
+    out = []
+    for v in items:
+        if str(v.get("STATUS", "")).upper() == "CANCELLED":
+            continue
+        if str(v.get("X-MICROSOFT-CDO-BUSYSTATUS", "")).upper() == "FREE" or \
+                str(v.get("TRANSP", "")).upper() == "TRANSPARENT":
+            continue
+        begin, all_day = _ics_time(v.decoded("DTSTART"))
+        finish = _ics_time(v.decoded("DTEND"))[0] if v.get("DTEND") else \
+            begin + (v.decoded("DURATION") if v.get("DURATION") else timedelta(days=1 if all_day else 0))
+        organizer = _person(v["ORGANIZER"]) if v.get("ORGANIZER") else ""
+        people = [organizer] if organizer else []
+        attendees = v.get("ATTENDEE") or []
+        for a in attendees if isinstance(attendees, list) else [attendees]:
+            if str(a.params.get("PARTSTAT", "")).upper() == "DECLINED" or \
+                    str(a.params.get("CUTYPE", "")).upper() in ("RESOURCE", "ROOM"):
+                continue
+            n = _person(a)
+            if n and n not in people:
+                people.append(n)
+        description = str(v.get("DESCRIPTION", "") or "")
+        location = str(v.get("LOCATION", "") or "").strip()
+        text = " ".join([str(v.get("X-MICROSOFT-SKYPETEAMSMEETINGURL", "") or ""), location, description])
+        link = _TEAMS_LINK.search(text) or _ANY_CALL_LINK.search(text)
+        uid = str(v.get("UID", ""))
+        out.append(Event(
+            id=f"{uid}:{begin.isoformat()}", subject=str(v.get("SUMMARY", "") or "").strip() or "Busy",
+            start=begin, end=finish, organizer=organizer, attendees=people[:40],
+            agenda=clean_agenda(description), join_url=link.group(0) if link else "",
+            web_link=str(v.get("URL", "") or ""), location=location, online=bool(link), all_day=all_day))
+    out.sort(key=lambda e: e.start)
+    return out
+
+
+def _fetch_graph(start: datetime, end: datetime) -> list[Event]:
     utc = lambda d: d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     params = {"startDateTime": utc(start), "endDateTime": utc(end), "$top": "100",
               "$orderby": "start/dateTime",
@@ -322,10 +437,18 @@ def fetch(start: datetime, end: datetime) -> list[Event]:
 # --------------------------------------------------------------------------- cache (for Home and quick lookups)
 
 
+def week_start(day: date | None = None) -> date:
+    """The Monday of the week `day` is in."""
+    day = day or date.today()
+    return day - timedelta(days=day.weekday())
+
+
 def refresh(days: int = 2) -> list[Event]:
-    """Fetch today's and the next few days' events and keep them for the Home screen."""
+    """Fetch this whole week's events (and at least the next few days) for the Home screen."""
     today = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-    start, end = today - timedelta(days=1), today + timedelta(days=days + 1)
+    monday = datetime.combine(week_start(today.date()), datetime.min.time())
+    start = min(today - timedelta(days=1), monday)
+    end = max(today + timedelta(days=days + 1), monday + timedelta(days=7))
     events = fetch(start.astimezone(), end.astimezone())
     CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(json.dumps({"from": start.isoformat(), "to": end.isoformat(), "fetched": time.time(),
@@ -349,6 +472,23 @@ def upcoming(limit: int = 5, now: datetime | None = None) -> list[Event]:
     horizon = (now + timedelta(days=2)).replace(hour=0, minute=0, second=0, microsecond=0)
     events, *_ = cached()
     return [e for e in events if not e.all_day and e.end > now and e.start < horizon][:limit]
+
+
+def week(monday: date | None = None) -> dict[date, list[Event]]:
+    """Each day of a week (Monday first) with its events from the cache, all-day ones first."""
+    monday = monday or week_start()
+    days = {monday + timedelta(days=i): [] for i in range(7)}
+    events, *_ = cached()
+    for e in events:
+        last = (e.end - timedelta(seconds=1)).date() if e.end > e.start else e.start.date()
+        d = e.start.date()
+        while d <= last:  # a multi-day event shows on each of its days
+            if d in days:
+                days[d].append(e)
+            d += timedelta(days=1)
+    for d in days:
+        days[d].sort(key=lambda e: (not e.all_day, e.start))
+    return days
 
 
 def match(events: list[Event], when: datetime, hint: str | None = None, app: str | None = None) -> Event | None:
