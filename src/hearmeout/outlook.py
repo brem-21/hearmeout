@@ -474,11 +474,26 @@ def upcoming(limit: int = 5, now: datetime | None = None) -> list[Event]:
     return [e for e in events if not e.all_day and e.end > now and e.start < horizon][:limit]
 
 
-def week(monday: date | None = None) -> dict[date, list[Event]]:
-    """Each day of a week (Monday first) with its events from the cache, all-day ones first."""
+def covers(monday: date) -> bool:
+    """Whether the cache holds this whole week."""
+    _, start, end = cached()
+    begin = datetime.combine(monday, datetime.min.time())
+    return bool(start and end and start <= begin and begin + timedelta(days=7) <= end)
+
+
+def fetch_week(monday: date) -> list[Event]:
+    """Another week's events, straight from the calendar (for browsing weeks on Home)."""
+    begin = datetime.combine(monday, datetime.min.time())
+    return fetch(begin.astimezone(), (begin + timedelta(days=7)).astimezone())
+
+
+def week(monday: date | None = None, events: list[Event] | None = None) -> dict[date, list[Event]]:
+    """Each day of a week (Monday first) with its events, all-day ones first.
+    Events come from the cache unless given (e.g. from fetch_week)."""
     monday = monday or week_start()
     days = {monday + timedelta(days=i): [] for i in range(7)}
-    events, *_ = cached()
+    if events is None:
+        events, *_ = cached()
     for e in events:
         last = (e.end - timedelta(seconds=1)).date() if e.end > e.start else e.start.date()
         d = e.start.date()
@@ -489,6 +504,13 @@ def week(monday: date | None = None) -> dict[date, list[Event]]:
     for d in days:
         days[d].sort(key=lambda e: (not e.all_day, e.start))
     return days
+
+
+def starting_soon(minutes: int, now: datetime | None = None) -> list[Event]:
+    """Meetings from the cache starting within the next `minutes` (for reminders)."""
+    now = now or datetime.now()
+    events, *_ = cached()
+    return [e for e in events if not e.all_day and now < e.start <= now + timedelta(minutes=minutes)]
 
 
 def match(events: list[Event], when: datetime, hint: str | None = None, app: str | None = None) -> Event | None:

@@ -61,6 +61,7 @@ class Settings:
     ms_client_id: str = ""
     ms_tenant: str = "organizations"  # or your organisation's tenant ID / domain
     ics_url: str = ""  # a published calendar link (Outlook › Shared calendars › Publish): no sign-in needed
+    remind_before: int = 5  # minutes before a meeting to notify you (0 = never)
 
 
 # env var -> (settings attribute, converter)
@@ -97,6 +98,7 @@ _TOML = {
     ("microsoft", "client_id"): "ms_client_id",
     ("microsoft", "tenant"): "ms_tenant",
     ("microsoft", "ics_url"): "ics_url",
+    ("microsoft", "remind_before"): "remind_before",
 }
 
 
@@ -171,6 +173,7 @@ appearance = "system"   # "system", "light" or "dark"
 client_id = ""     # empty = Hear Me Out's own; or your organisation's app (client) ID
 tenant = "organizations"
 ics_url = ""       # or, with no sign-in: your calendar's published ICS link
+remind_before = 5  # minutes before a meeting to notify you (0 = never)
 """
         )
         CONFIG_FILE.chmod(0o600)
