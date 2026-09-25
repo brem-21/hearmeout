@@ -28,7 +28,8 @@ into your local Obsidian vault as plain Markdown.
 - **Knows your calendar.** Connect your Outlook calendar (Settings › Integrations) and a
   recording is named after the Outlook or Teams meeting it belongs to. Invitees'
   names help the transcript and the to-do owners, the invite's agenda helps the
-  summary, and Home shows your week's meetings: click one to join.
+  summary. Home shows your week's meetings (click one to join, or to open the notes if you
+  recorded it), and you get a reminder with a **Join** button 5 minutes before each one.
 - **You choose what's saved.** After each meeting, a review window lets you pick
   any of: summary, my to-dos, team tasks, transcript, audio. Untick individual
   tasks, fix the title, pick the vault, then save.
@@ -139,9 +140,19 @@ next few days of events in `~/.local/share/hearmeout/calendar.json`.
 Open **Hear Me Out** from your app menu, or run `hearmeout`.
 
 The app opens on **Home**: a greeting, **Record now**, a reminder if your name or
-keys are still missing, **This week** from your calendar (Monday to Sunday, today
-highlighted: hover a meeting for who's invited, click it to join the Teams call),
-your recent meetings and all your open to-dos (tick them off right there). Esc or Alt+Home comes back to it.
+keys are still missing, your week from the calendar, your recent meetings and your
+open to-dos (tick them off right there).
+
+- **The week** runs Monday to Sunday with today highlighted. **‹ ›** move between
+  weeks and **Today** comes back. Hover a meeting for who's invited. Click it to join
+  the call (↗), or, for a meeting you recorded, to open its notes (◆ saved,
+  🎙 still to save).
+- **Reminders:** a notification with **Join** a few minutes before each meeting
+  (Settings › Integrations › Remind me: 5 minutes by default, or Never).
+- **To-dos** (sidebar, or the to-dos tile) lists every to-do from your saved meetings
+  **by date** (Overdue, Today, Tomorrow, Later this week, Next week, Later, No due
+  date) or **by meeting**, optionally with team tasks and finished ones. Ticking one
+  updates its note in Obsidian. Esc or Alt+Home comes back to it.
 
 The sidebar has **Record** (Ctrl+R), search (Ctrl+F), recordings still to save and
 your saved meetings by day; Settings (Ctrl+,) is at the bottom, with buttons to jump
