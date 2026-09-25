@@ -310,6 +310,14 @@ def apply(app: QApplication, mode: str | None = None) -> None:
         pal.setColor(role, QColor(T[key]))
     app.setPalette(pal)
     app.setStyleSheet(stylesheet(T))
+    # Tell web pages (Outlook in the Mail pane) which theme to use, so they match the app rather
+    # than the desktop: "system" follows the desktop, light/dark follow your choice here.
+    hints = app.styleHints()
+    if hasattr(hints, "setColorScheme"):  # Qt 6.8+
+        if MODE == "system":
+            hints.unsetColorScheme()
+        else:
+            hints.setColorScheme(Qt.ColorScheme.Dark if MODE == "dark" else Qt.ColorScheme.Light)
 
 
 def follow_system(app: QApplication, on_change) -> None:

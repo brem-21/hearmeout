@@ -160,6 +160,9 @@ class _RecBanner(QFrame):
         self.open.setVisible(self.win.current != "recording")
 
 
+SIDEBAR = 300  # px
+
+
 class MainWindow(QMainWindow):
     def __init__(self, watcher):
         super().__init__()
@@ -194,7 +197,7 @@ class MainWindow(QMainWindow):
     def _build(self) -> None:
         side = QWidget()
         side.setObjectName("Sidebar")
-        side.setFixedWidth(300)
+        side.setFixedWidth(SIDEBAR)
         s = QVBoxLayout(side)
         s.setContentsMargins(14, 16, 14, 12)
         s.setSpacing(10)
@@ -779,8 +782,10 @@ class MainWindow(QMainWindow):
         return self._outlook_view
 
     def _home_width(self) -> int:
-        """How wide Home's column is in this window (it's centred, at most 1240 px)."""
-        return min(1240, max(0, self.detail.width() - 64))
+        """How wide Home's column is in this window (it's centred, at most 1240 px). Worked out from
+        the window, not the content area: that is briefly 0 wide while the window is rebuilt
+        (e.g. on a theme change), which made Home stack its panes by mistake."""
+        return min(1240, max(0, self.width() - SIDEBAR - 64))
 
     def _home_wide(self) -> bool:
         """Room for two panes side by side?"""
